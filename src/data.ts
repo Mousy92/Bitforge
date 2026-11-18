@@ -1,0 +1,113 @@
+// Data layer: load the slim gamedata snapshot and expose typed lookups.
+// The snapshot is produced by scripts/build-data.mjs from the BitCraft_GameData
+// community repo (cereal/cs branch). Keys in the file are short to keep it small;
+// we expand them into friendly shapes here.
+
+export type Kind = "i" | "c"; // item or cargo
+export type MatRef = [Kind, number, number]; // [kind, id, quantity]
+
+export interface ItemRaw {
+  n: string; // name
+  t: number; // tier (-1 = none)
+  tag: string;
+  r: string; // rarity
+  ic: string; // icon asset name
+  gp?: string; // gather profession (only on raw/uncrafted items)
+}
+
+export interface RecipeRaw {
+  sk: number; // skill id
+  lv: number; // level required
+  bt: number; // building type id
+  bl: number; // building tier
+  out: number; // output quantity
+  act: number; // actions required
+  mats: MatRef[];
+}
+
+export interface BuildingRaw {
+  id: number;
+  n: string;
+  desc: string;
+  ic: string;
+  ft: number; // function type
+  recipe: { sk: number; lv: number; act: number; mats: MatRef[] };
+}
+
+export interface GameData {
+  generatedAt: string;
+  sourceCommit: string;
+  skills: Record<string, string>;
+  buildingTypes: Record<string, string>;
+  items: Record<string, ItemRaw>;
+  buildings: BuildingRaw[];
+  recipes: Record<string, RecipeRaw[]>;
+}
+
+/** A key like "i1010001" or "c150000" identifying an item/cargo across namespaces. */
+export type ItemKey = string;
+export const keyOf = (kind: Kind, id: number): ItemKey => `${kind}${id}`;
+
+let DATA: GameData | null = null;
+
+export async function loadGameData(): Promise<GameData> {
+  if (DATA) return DATA;
+  const res = await fetch(`${import.meta.env.BASE_URL}data/gamedata.json`);
+  if (!res.ok) throw new Error(`Failed to load game data (${res.status})`);
+  DATA = (await res.json()) as GameData;
+  return DATA;
+}
+
+export function getData(): GameData {
+  if (!DATA) throw new Error("Game data not loaded yet");
+  return DATA;
+}
+
+/** Resolve a material key across the item/cargo namespaces (self-heals bad refs). */
+export function resolveKey(data: GameData, key: ItemKey): ItemKey {
+  if (data.items[key]) return key;
+  const alt = key[0] === "i" ? "c" + key.slice(1) : "i" + key.slice(1);
+  return data.items[alt] ? alt : key;
+}
+
+export function itemName(data: GameData, key: ItemKey): string {
+  return data.items[resolveKey(data, key)]?.n ?? key;
+}
+
+export function skillName(data: GameData, id: number): string {
+  return data.skills[String(id)] || "";
+}
+
+export function buildingTypeName(data: GameData, id: number): string {
+  return data.buildingTypes[String(id)] || "";
+}
+
+/** The first (primary) crafting recipe for an item, if any. */
+export function recipeFor(data: GameData, key: ItemKey): RecipeRaw | undefined {
+  const recs = data.recipes[resolveKey(data, key)];
+  return recs && recs.length ? recs[0] : undefined;
+}
+
+export function recipesFor(data: GameData, key: ItemKey): RecipeRaw[] {
+  return data.recipes[resolveKey(data, key)] || [];
+}
+
+/**
+ * The profession responsible for producing a line item:
+ *  - craftable -> the skill of its (chosen) recipe
+ *  - raw       -> its tagged gather profession, else "Raw / Gathered"
+ */
+export const RAW_BUCKET = "Raw / Gathered";
+export function professionFor(
+  data: GameData,
+  key: ItemKey,
+  chosen?: Record<ItemKey, number>
+): string {
+  const rk = resolveKey(data, key);
+  const recs = data.recipes[rk];
+  if (recs && recs.length) {
+    const idx = Math.min(chosen?.[rk] ?? 0, recs.length - 1);
+    return skillName(data, recs[idx].sk) || "Crafting";
+  }
+  return data.items[rk]?.gp || RAW_BUCKET;
+}
