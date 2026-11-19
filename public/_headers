@@ -1,0 +1,8 @@
+# Cloudflare Pages / Netlify header rules.
+# The hashed JS/CSS assets are immutable; cache them hard.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The game data snapshot changes only when regenerated; cache for a day.
+/data/*
+  Cache-Control: public, max-age=86400

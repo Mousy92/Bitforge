@@ -75,11 +75,28 @@ npm run preview
 ## Deploy
 
 It's a static site with hash-based state, so no SPA rewrite rules are needed.
-Point any static host at `dist/`. For a custom domain, build and upload `dist/`,
-or connect the repo to Cloudflare Pages / Netlify / Vercel with:
+Point any static host at `dist/`.
 
-- **Build command:** `npm run build`
-- **Output directory:** `dist`
+### Cloudflare Pages (recommended)
+
+1. In the Cloudflare dashboard: **Workers & Pages → Create → Pages → Connect to Git**
+   and pick the `bitforge` repo.
+2. Build settings:
+   - **Framework preset:** none / Vite
+   - **Build command:** `npm run build`
+   - **Build output directory:** `dist`
+3. Deploy. Every push to the default branch auto-builds and publishes.
+
+**Custom domain:** in the Pages project → **Custom domains → Set up a domain**,
+enter your domain (or a subdomain like `bitforge.yourdomain.com`). If the domain's
+DNS is already on Cloudflare, it wires up automatically; otherwise follow the CNAME
+instructions it shows. The included `public/_headers` sets sensible caching for the
+hashed assets and the data file.
+
+### Anywhere else
+
+Netlify / Vercel use the same `npm run build` → `dist` settings. Or just run
+`npm run build` and upload the `dist/` folder to any static host.
 
 ## Roadmap
 
