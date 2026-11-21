@@ -1,13 +1,13 @@
 // Gear taxonomy and upgrade-target resolution for the Gear Tracker.
 //
 // BitCraft gear comes as discrete items per (tier, rarity): e.g. a forester's
-// axe line runs Flint Axe (T1) -> Pyrelite Axe (T2) -> ... -> Astralite Axe
-// (T10), each in several rarities. We group items into "lines" (the same piece
-// across tiers, at one rarity) so we can offer "upgrade this to tier N" and
+// axe runs Flint Axe (T1) -> ... -> Astralite Axe (T10), each in several
+// rarities (Common..Mythic). We group every tier/rarity variant into a "piece"
+// (the axe slot) so the tracker can target a specific tier AND rarity and
 // resolve it to the craftable item whose recipe we roll up.
 
 import type { GameData, ItemKey, ItemRaw } from "./data";
-import { resolveKey } from "./data";
+import { resolveKey, skillName } from "./data";
 
 export type GearCategory =
   | "tool"
@@ -18,33 +18,35 @@ export type GearCategory =
   | "trinket"
   | "cosmetic";
 
-export interface GearCatInfo {
-  id: GearCategory;
-  label: string;
-  order: number;
+/** The three tracker subtabs and which categories each contains. */
+export type GearSubtab = "gear" | "trinkets" | "armor";
+export const SUBTABS: { id: GearSubtab; label: string; cats: GearCategory[] }[] = [
+  { id: "gear", label: "Gear", cats: ["tool", "weapon"] },
+  { id: "trinkets", label: "Trinkets", cats: ["trinket", "charm", "instrument"] },
+  { id: "armor", label: "Armor", cats: ["armor"] },
+];
+export function subtabOfCategory(cat: GearCategory): GearSubtab | null {
+  for (const s of SUBTABS) if (s.cats.includes(cat)) return s.id;
+  return null;
 }
 
-const CATS: GearCatInfo[] = [
-  { id: "tool", label: "Tools", order: 0 },
-  { id: "weapon", label: "Weapons", order: 1 },
-  { id: "armor", label: "Armor", order: 2 },
-  { id: "charm", label: "Charms", order: 3 },
-  { id: "instrument", label: "Instruments", order: 4 },
-  { id: "trinket", label: "Trinkets", order: 5 },
-  { id: "cosmetic", label: "Cosmetic", order: 6 },
-];
-const CAT_BY_ID = new Map(CATS.map((c) => [c.id, c]));
+// Rarity ordering, weakest to strongest. Top rarity = last.
+export const RARITIES = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
+export function rarityRank(r: string): number {
+  const i = RARITIES.indexOf(r);
+  return i === -1 ? 0 : i;
+}
 
 /** Classify a tag into a gear category, or null if it isn't equippable gear. */
-export function categoryOf(tag: string): GearCatInfo | null {
+export function categoryOf(tag: string): GearCategory | null {
   if (!tag) return null;
-  if (/(^| )Tool$/.test(tag)) return CAT_BY_ID.get("tool")!;
-  if (tag === "Weapon") return CAT_BY_ID.get("weapon")!;
-  if (tag === "Metal Armor" || tag === "Dungeon Equipment") return CAT_BY_ID.get("armor")!;
-  if (/Charm$/.test(tag)) return CAT_BY_ID.get("charm")!;
-  if (/Instrument$/.test(tag)) return CAT_BY_ID.get("instrument")!;
-  if (tag === "Trinket") return CAT_BY_ID.get("trinket")!;
-  if (/Cosmetic/.test(tag)) return CAT_BY_ID.get("cosmetic")!;
+  if (/(^| )Tool$/.test(tag)) return "tool";
+  if (tag === "Weapon") return "weapon";
+  if (tag === "Metal Armor" || tag === "Dungeon Equipment") return "armor";
+  if (/Charm$/.test(tag)) return "charm";
+  if (/Instrument$/.test(tag)) return "instrument";
+  if (tag === "Trinket") return "trinket";
+  if (/Cosmetic/.test(tag)) return "cosmetic";
   return null;
 }
 
@@ -57,19 +59,18 @@ export interface GearItem {
   craftable: boolean;
 }
 
-export interface GearLine {
-  lineKey: string;
+export interface GearPiece {
+  pieceKey: string; // tag|suffix
   tag: string;
-  rarity: string;
   suffix: string; // the shared piece name, e.g. "Axe", "Plated Boots"
   category: GearCategory;
-  items: GearItem[]; // sorted by tier
+  items: GearItem[]; // every tier/rarity variant, sorted by tier then rarity
 }
 
 export interface GearIndex {
-  lines: Map<string, GearLine>;
-  lineOfItem: Map<ItemKey, string>; // itemKey -> lineKey
-  byCategory: Map<GearCategory, GearLine[]>;
+  pieces: Map<string, GearPiece>;
+  pieceOfItem: Map<ItemKey, string>;
+  byCategory: Map<GearCategory, GearPiece[]>;
 }
 
 /** The shared piece name: drop the leading material word (Flint, Umbracite…). */
@@ -78,86 +79,163 @@ function suffixOf(name: string): string {
   return parts.length > 1 ? parts.slice(1).join(" ") : name;
 }
 
-function lineKeyOf(tag: string, rarity: string, suffix: string): string {
-  return `${tag}|${rarity}|${suffix}`;
-}
-
 export function buildGearIndex(data: GameData): GearIndex {
-  const lines = new Map<string, GearLine>();
-  const lineOfItem = new Map<ItemKey, string>();
+  const pieces = new Map<string, GearPiece>();
+  const pieceOfItem = new Map<ItemKey, string>();
 
   for (const [key, it] of Object.entries(data.items) as [ItemKey, ItemRaw][]) {
     const cat = categoryOf(it.tag);
     if (!cat || (it.t ?? -1) < 1) continue;
     const suffix = suffixOf(it.n);
-    const rarity = it.r || "Common";
-    const lk = lineKeyOf(it.tag, rarity, suffix);
-    let line = lines.get(lk);
-    if (!line) {
-      line = { lineKey: lk, tag: it.tag, rarity, suffix, category: cat.id, items: [] };
-      lines.set(lk, line);
+    const pk = `${it.tag}|${suffix}`;
+    let piece = pieces.get(pk);
+    if (!piece) {
+      piece = { pieceKey: pk, tag: it.tag, suffix, category: cat, items: [] };
+      pieces.set(pk, piece);
     }
     const craftable = !!(data.recipes[key] && data.recipes[key].length);
-    line.items.push({ key, name: it.n, tier: it.t, rarity, tag: it.tag, craftable });
-    lineOfItem.set(key, lk);
+    piece.items.push({ key, name: it.n, tier: it.t, rarity: it.r || "Common", tag: it.tag, craftable });
+    pieceOfItem.set(key, pk);
   }
 
-  // Sort each line by tier (craftable first within a tier so twins resolve well).
-  for (const line of lines.values()) {
-    line.items.sort((a, b) => a.tier - b.tier || Number(b.craftable) - Number(a.craftable));
+  for (const piece of pieces.values()) {
+    piece.items.sort(
+      (a, b) =>
+        a.tier - b.tier ||
+        rarityRank(a.rarity) - rarityRank(b.rarity) ||
+        Number(b.craftable) - Number(a.craftable)
+    );
   }
 
-  const byCategory = new Map<GearCategory, GearLine[]>();
-  for (const line of lines.values()) {
-    if (!byCategory.has(line.category)) byCategory.set(line.category, []);
-    byCategory.get(line.category)!.push(line);
+  const byCategory = new Map<GearCategory, GearPiece[]>();
+  for (const piece of pieces.values()) {
+    if (!byCategory.has(piece.category)) byCategory.set(piece.category, []);
+    byCategory.get(piece.category)!.push(piece);
   }
   for (const arr of byCategory.values()) {
-    arr.sort((a, b) => a.tag.localeCompare(b.tag) || a.suffix.localeCompare(b.suffix) || a.rarity.localeCompare(b.rarity));
+    arr.sort((a, b) => a.tag.localeCompare(b.tag) || a.suffix.localeCompare(b.suffix));
   }
 
-  return { lines, lineOfItem, byCategory };
+  return { pieces, pieceOfItem, byCategory };
 }
 
-export function categoriesInOrder(): GearCatInfo[] {
-  return [...CATS].sort((a, b) => a.order - b.order);
+/** Resolve the gear piece for an item key (handles item/cargo namespace). */
+export function pieceForItem(data: GameData, index: GearIndex, key: ItemKey): GearPiece | null {
+  const pk = index.pieceOfItem.get(key) ?? index.pieceOfItem.get(resolveKey(data, key));
+  return pk ? index.pieces.get(pk) ?? null : null;
 }
 
-/** Resolve the gear line for an item key (handles item/cargo namespace). */
-export function lineForItem(data: GameData, index: GearIndex, key: ItemKey): GearLine | null {
-  const lk = index.lineOfItem.get(key) ?? index.lineOfItem.get(resolveKey(data, key));
-  return lk ? index.lines.get(lk) ?? null : null;
+/** All tiers present in a piece (any rarity). */
+export function tiersOf(piece: GearPiece): number[] {
+  return [...new Set(piece.items.map((i) => i.tier))].sort((a, b) => a - b);
+}
+
+/** Tiers that have at least one craftable variant. */
+export function craftableTiers(piece: GearPiece): number[] {
+  return [...new Set(piece.items.filter((i) => i.craftable).map((i) => i.tier))].sort((a, b) => a - b);
+}
+
+/** Rarities available at a tier, strongest last. `craftableOnly` restricts to craftable variants. */
+export function raritiesAtTier(piece: GearPiece, tier: number, craftableOnly = false): string[] {
+  const rs = piece.items
+    .filter((i) => i.tier === tier && (!craftableOnly || i.craftable))
+    .map((i) => i.rarity);
+  return [...new Set(rs)].sort((a, b) => rarityRank(a) - rarityRank(b));
+}
+
+/** The strongest craftable rarity at a tier (falls back to any rarity present). */
+export function topRarityAtTier(piece: GearPiece, tier: number): string {
+  const craft = raritiesAtTier(piece, tier, true);
+  if (craft.length) return craft[craft.length - 1];
+  const any = raritiesAtTier(piece, tier, false);
+  return any.length ? any[any.length - 1] : "Common";
+}
+
+/** The highest craftable tier for a piece. */
+export function maxCraftableTier(piece: GearPiece): number {
+  const ts = craftableTiers(piece);
+  return ts.length ? ts[ts.length - 1] : tiersOf(piece)[0] ?? 1;
 }
 
 /**
- * The craftable item in `line` at the given tier (prefers a craftable twin). If
- * no craftable exists at that exact tier, returns the nearest craftable at a
- * higher tier, else null.
+ * The craftable item at (tier, rarity). Falls back to a lower rarity at the same
+ * tier, then to the nearest craftable at a higher tier, then any variant there.
  */
-export function resolveTarget(line: GearLine, tier: number): GearItem | null {
-  const atTier = line.items.filter((i) => i.tier === tier);
-  const craft = atTier.find((i) => i.craftable);
-  if (craft) return craft;
-  // nearest craftable at or above the requested tier
-  const up = line.items.filter((i) => i.tier >= tier && i.craftable).sort((a, b) => a.tier - b.tier);
+export function resolve(piece: GearPiece, tier: number, rarity: string): GearItem | null {
+  const atTier = piece.items.filter((i) => i.tier === tier);
+  const exact = atTier.find((i) => i.rarity === rarity && i.craftable);
+  if (exact) return exact;
+  // nearest craftable rarity at this tier, at or below the requested rarity, else any craftable
+  const wanted = rarityRank(rarity);
+  const downCraft = atTier
+    .filter((i) => i.craftable && rarityRank(i.rarity) <= wanted)
+    .sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity));
+  if (downCraft[0]) return downCraft[0];
+  const anyCraft = atTier.filter((i) => i.craftable).sort((a, b) => rarityRank(b.rarity) - rarityRank(a.rarity));
+  if (anyCraft[0]) return anyCraft[0];
+  // climb tiers
+  const up = piece.items.filter((i) => i.tier > tier && i.craftable).sort((a, b) => a.tier - b.tier);
   return up[0] ?? atTier[0] ?? null;
 }
 
-/** Tiers available in a line that you can craft (for the target dropdown). */
-export function craftableTiers(line: GearLine): number[] {
-  return [...new Set(line.items.filter((i) => i.craftable).map((i) => i.tier))].sort((a, b) => a - b);
-}
-
 /**
- * The craftable items for every tier step from `cur` (exclusive) up to `tgt`
- * (inclusive) — i.e. each tool you'd actually craft climbing the line one tier
- * at a time. Skips tiers with no craftable item.
+ * Each tool you'd craft climbing from `curTier` (exclusive) to `tgtTier`
+ * (inclusive), at the target rarity (with resolve()'s fallbacks).
  */
-export function stepsBetween(line: GearLine, cur: number, tgt: number): GearItem[] {
+export function stepsBetween(
+  piece: GearPiece,
+  curTier: number,
+  tgtTier: number,
+  tgtRarity: string
+): GearItem[] {
   const out: GearItem[] = [];
-  for (let t = cur + 1; t <= tgt; t++) {
-    const item = line.items.find((i) => i.tier === t && i.craftable);
+  for (let t = curTier + 1; t <= tgtTier; t++) {
+    const item = resolve(piece, t, tgtRarity);
     if (item) out.push(item);
   }
   return out;
+}
+
+/** Is (tgtT,tgtR) actually an upgrade over (curT,curR)? */
+export function isUpgrade(curT: number, curR: string, tgtT: number, tgtR: string): boolean {
+  return tgtT > curT || (tgtT === curT && rarityRank(tgtR) > rarityRank(curR));
+}
+
+/** The profession skill that crafts this piece (from its recipes), e.g. "Carpentry". */
+export function professionOf(data: GameData, piece: GearPiece): string {
+  for (const i of piece.items) {
+    const recs = data.recipes[i.key];
+    if (recs && recs.length) {
+      const sk = skillName(data, recs[0].sk);
+      if (sk) return sk;
+    }
+  }
+  return "";
+}
+
+/** Minimum craft level required for each craftable tier of a piece. */
+export function tierLevels(data: GameData, piece: GearPiece): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const i of piece.items) {
+    if (!i.craftable) continue;
+    const recs = data.recipes[i.key];
+    if (!recs || !recs.length) continue;
+    const lv = recs[0].lv ?? 0;
+    const prev = out.get(i.tier);
+    if (prev === undefined || lv < prev) out.set(i.tier, lv);
+  }
+  return out;
+}
+
+/**
+ * The tier a player of `level` should be using for this piece: the highest
+ * craftable tier whose required level they've reached. Falls back to the lowest
+ * craftable tier if they haven't reached any.
+ */
+export function recommendedTier(data: GameData, piece: GearPiece, level: number): number {
+  const levels = tierLevels(data, piece);
+  const tiers = [...levels.keys()].sort((a, b) => a - b);
+  let rec = tiers[0] ?? 1;
+  for (const t of tiers) if ((levels.get(t) ?? 0) <= level) rec = t;
+  return rec;
 }

@@ -5,26 +5,61 @@ import { planBuild } from "../engine";
 import type { Target } from "../model";
 import {
   type GearIndex,
-  type GearLine,
+  type GearPiece,
+  type GearSubtab,
+  SUBTABS,
   buildGearIndex,
-  categoriesInOrder,
   craftableTiers,
-  lineForItem,
-  resolveTarget,
+  isUpgrade,
+  maxCraftableTier,
+  pieceForItem,
+  professionOf,
+  raritiesAtTier,
+  recommendedTier,
+  resolve,
   stepsBetween,
+  tiersOf,
+  topRarityAtTier,
 } from "../gear";
-import { pullEquipment } from "../backend";
+import { type PlayerSkill, pullEquipment, pullPlayer } from "../backend";
 import { PlanView } from "./PlanView";
 
-interface Tracked {
-  lineKey: string;
-  cur: number; // current tier
-  tgt: number; // target tier
+interface PieceState {
+  cur: { t: number; r: string };
+  tgt: { t: number; r: string };
+}
+interface Member {
+  id: string;
+  name: string;
+  playerId: string;
+  gear: Record<string, PieceState>;
+  skills: PlayerSkill[];
 }
 
-const PLAYER_LS = "bitforge:player";
-const GEAR_LS = "bitforge:gear";
+const VILLAGE_LS = "bitforge:village2";
+const SUB_LS = "bitforge:gearsub";
 const STEP_LS = "bitforge:gearstep";
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+function loadVillage(): Member[] {
+  try {
+    const r = localStorage.getItem(VILLAGE_LS);
+    if (r) {
+      const v = JSON.parse(r) as Member[];
+      if (Array.isArray(v) && v.length) return v;
+    }
+  } catch {
+    /* ignore */
+  }
+  return [{ id: uid(), name: "Me", playerId: "", gear: {}, skills: [] }];
+}
+
+/** Default target for a piece: top craftable tier at its top rarity. */
+function topTarget(piece: GearPiece): { t: number; r: string } {
+  const t = maxCraftableTier(piece);
+  return { t, r: topRarityAtTier(piece, t) };
+}
 
 export function GearTab({
   data,
@@ -36,24 +71,16 @@ export function GearTab({
   onRefresh: () => void;
 }) {
   const index = useMemo(() => buildGearIndex(data), [data]);
-  const [player, setPlayer] = useState<string>(() => {
+  const [village, setVillage] = useState<Member[]>(loadVillage);
+  const [activeId, setActiveId] = useState<string>(() => loadVillage()[0]?.id ?? "");
+  const [sub, setSub] = useState<GearSubtab>(() => {
     try {
-      return localStorage.getItem(PLAYER_LS) || "";
+      return (localStorage.getItem(SUB_LS) as GearSubtab) || "gear";
     } catch {
-      return "";
+      return "gear";
     }
   });
-  const [tracked, setTracked] = useState<Tracked[]>(() => {
-    try {
-      const r = localStorage.getItem(GEAR_LS);
-      return r ? (JSON.parse(r) as Tracked[]) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [addQ, setAddQ] = useState("");
+  const [scope, setScope] = useState<string>("all"); // "all" or member id
   const [stepEach, setStepEachState] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STEP_LS) === "1";
@@ -61,6 +88,17 @@ export function GearTab({
       return false;
     }
   });
+  const [chosen, setChosen] = useState<Record<ItemKey, number>>({});
+  const [overrides, setOverrides] = useState<Record<ItemKey, number>>({});
+
+  function persist(next: Member[]) {
+    setVillage(next);
+    try {
+      localStorage.setItem(VILLAGE_LS, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }
   function setStepEach(b: boolean) {
     setStepEachState(b);
     try {
@@ -69,40 +107,61 @@ export function GearTab({
       /* ignore */
     }
   }
-  const [chosen, setChosen] = useState<Record<ItemKey, number>>({});
-  const [overrides, setOverrides] = useState<Record<ItemKey, number>>({});
-
-  function persist(next: Tracked[]) {
-    setTracked(next);
+  function pickSub(s: GearSubtab) {
+    setSub(s);
     try {
-      localStorage.setItem(GEAR_LS, JSON.stringify(next));
+      localStorage.setItem(SUB_LS, s);
     } catch {
       /* ignore */
     }
   }
 
-  // Build a plan from every piece whose target tier beats its current tier.
-  // In "step through every tier" mode, we craft each tool on the way up (the
-  // realistic grind); otherwise just the final target item.
+  const active = village.find((m) => m.id === activeId) ?? village[0];
+  const subCats = SUBTABS.find((s) => s.id === sub)!.cats;
+
+  function updateMember(id: string, fn: (m: Member) => Member) {
+    persist(village.map((m) => (m.id === id ? fn(m) : m)));
+  }
+  function addMember() {
+    const m: Member = { id: uid(), name: `Person ${village.length + 1}`, playerId: "", gear: {}, skills: [] };
+    persist([...village, m]);
+    setActiveId(m.id);
+  }
+  function removeMember(id: string) {
+    const next = village.filter((m) => m.id !== id);
+    persist(next.length ? next : loadVillage());
+    if (activeId === id) setActiveId((next[0] ?? loadVillage()[0]).id);
+    if (scope === id) setScope("all");
+  }
+
+  // --- the rollup plan ---
   const build = useMemo(() => {
     const qty = new Map<ItemKey, number>();
-    for (const t of tracked) {
-      const line = index.lines.get(t.lineKey);
-      if (!line || t.tgt <= t.cur) continue;
-      const items = stepEach ? stepsBetween(line, t.cur, t.tgt) : [resolveTarget(line, t.tgt)].filter(Boolean);
-      for (const item of items) if (item) qty.set(item.key, (qty.get(item.key) || 0) + 1);
+    const members = scope === "all" ? village : village.filter((m) => m.id === scope);
+    for (const m of members) {
+      for (const [pk, st] of Object.entries(m.gear)) {
+        const piece = index.pieces.get(pk);
+        if (!piece || !isUpgrade(st.cur.t, st.cur.r, st.tgt.t, st.tgt.r)) continue;
+        const items =
+          stepEach && st.tgt.t > st.cur.t
+            ? stepsBetween(piece, st.cur.t, st.tgt.t, st.tgt.r)
+            : [resolve(piece, st.tgt.t, st.tgt.r)].filter(Boolean);
+        for (const it of items) if (it) qty.set(it.key, (qty.get(it.key) || 0) + 1);
+      }
     }
     const targets: Target[] = [...qty.entries()].map(([k, q]) => ({ t: "i", k, q }));
     return { name: "Gear upgrades", targets };
-  }, [tracked, index, stepEach]);
+  }, [village, scope, stepEach, index]);
 
   const plan = useMemo(() => planBuild(data, build, chosen), [data, build, chosen]);
   const buildSig = useMemo(
     () =>
-      "gear:" +
-      (stepEach ? "step:" : "") +
-      tracked.map((t) => `${t.lineKey}:${t.cur}>${t.tgt}`).sort().join("|"),
-    [tracked, stepEach]
+      "gearv:" +
+      scope +
+      (stepEach ? ":step" : "") +
+      ":" +
+      build.targets.map((t) => `${"k" in t ? t.k : t.id}:${t.q}`).sort().join("|"),
+    [build, scope, stepEach]
   );
 
   useEffect(() => {
@@ -127,174 +186,94 @@ export function GearTab({
     });
   }
 
-  function addLine(lineKey: string, cur?: number) {
-    const line = index.lines.get(lineKey);
-    if (!line) return;
-    const tiers = craftableTiers(line);
-    const curTier = cur ?? line.items[0]?.tier ?? 1;
-    const tgt = tiers.find((t) => t > curTier) ?? tiers[tiers.length - 1] ?? curTier;
-    persist([
-      ...tracked.filter((t) => t.lineKey !== lineKey),
-      { lineKey, cur: curTier, tgt },
-    ]);
-    setAddQ("");
-  }
-  function setField(lineKey: string, field: "cur" | "tgt", val: number) {
-    persist(
-      tracked.map((t) => {
-        if (t.lineKey !== lineKey) return t;
-        const next = { ...t, [field]: val };
-        if (field === "cur" && next.tgt < val) next.tgt = val;
-        return next;
-      })
-    );
-  }
-  function remove(lineKey: string) {
-    persist(tracked.filter((t) => t.lineKey !== lineKey));
-  }
-
-  async function pull() {
-    const id = player.trim();
-    if (!/^\d{5,25}$/.test(id)) {
-      setMsg("Enter your numeric player ID (from your bitjita.com/players/… URL).");
-      return;
-    }
-    setBusy(true);
-    setMsg(null);
-    try {
-      localStorage.setItem(PLAYER_LS, id);
-    } catch {
-      /* ignore */
-    }
-    const res = await pullEquipment(data, id);
-    setBusy(false);
-    if (!res) {
-      setMsg("Couldn't reach equipment for that player. Check the ID.");
-      return;
-    }
-    if (!res.count) {
-      setMsg("No equipped gear found for that player.");
-      return;
-    }
-    // Merge pulled gear into tracked, keeping any target tiers already chosen.
-    const byLine = new Map(tracked.map((t) => [t.lineKey, t]));
-    let added = 0;
-    for (const eq of res.items) {
-      const line = lineForItem(data, index, eq.key);
-      if (!line) continue;
-      const cur = eq.tier ?? line.items[0]?.tier ?? 1;
-      const tiers = craftableTiers(line);
-      const existing = byLine.get(line.lineKey);
-      const tgt = existing?.tgt ?? (tiers.find((t) => t > cur) ?? tiers[tiers.length - 1] ?? cur);
-      byLine.set(line.lineKey, { lineKey: line.lineKey, cur, tgt });
-      added++;
-    }
-    persist([...byLine.values()]);
-    setMsg(`Pulled ${added} equipped piece${added === 1 ? "" : "s"}.`);
-  }
-
-  // Manual-add search over gear lines.
-  const addResults = useMemo(() => {
-    const q = addQ.trim().toLowerCase();
-    if (!q) return [];
-    const out: GearLine[] = [];
-    for (const line of index.lines.values()) {
-      const label = `${line.suffix} ${line.rarity} ${line.tag}`.toLowerCase();
-      if (label.includes(q)) out.push(line);
-      if (out.length > 40) break;
-    }
-    return out.sort((a, b) => a.tag.localeCompare(b.tag) || a.suffix.localeCompare(b.suffix)).slice(0, 14);
-  }, [addQ, index]);
-
-  const cats = categoriesInOrder();
   const upgradeCount = build.targets.length;
 
   return (
     <main className="layout">
       <section className="col-left">
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Your gear</h2>
-          </div>
-          <p className="hint">
-            Pull your equipped gear from{" "}
-            <a href="https://bitjita.com" target="_blank" rel="noreferrer">
-              Bitjita
-            </a>
-            , then pick a target tier for each piece. BitForge totals the upgrade materials by
-            profession.
-          </p>
-          <div className="store-row">
-            <input
-              className="search"
-              placeholder="Player ID (number from your bitjita.com/players/… URL)"
-              value={player}
-              onChange={(e) => setPlayer(e.target.value)}
-              inputMode="numeric"
-            />
-            <button className="btn primary small" disabled={busy} onClick={pull}>
-              {busy ? "Pulling…" : "Pull gear"}
-            </button>
-          </div>
-          {msg && <div className="store-msg">{msg}</div>}
+        <MemberBar
+          village={village}
+          activeId={active?.id ?? ""}
+          onSelect={setActiveId}
+          onAdd={addMember}
+        />
 
-          <div className="gear-add">
-            <input
-              className="search"
-              placeholder="Add gear manually… (e.g. axe, plated boots, shortsword)"
-              value={addQ}
-              onChange={(e) => setAddQ(e.target.value)}
-            />
-            {addResults.length > 0 && (
-              <ul className="gear-add-results">
-                {addResults.map((line) => (
-                  <li key={line.lineKey}>
-                    <button onClick={() => addLine(line.lineKey)}>
-                      <span className="gear-add-name">{line.suffix}</span>
-                      <span className="gear-add-meta">
-                        {line.rarity} · {line.tag}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+        {active && (
+          <MemberPanel
+            key={active.id}
+            data={data}
+            index={index}
+            member={active}
+            onUpdate={(fn) => updateMember(active.id, fn)}
+            onRemove={() => removeMember(active.id)}
+            canRemove={village.length > 1}
+          />
+        )}
 
-          {tracked.length > 0 && (
-            <button className="btn ghost small clear" onClick={() => persist([])}>
-              Clear all gear
+        <div className="gear-subtabs">
+          {SUBTABS.map((s) => (
+            <button key={s.id} className={sub === s.id ? "gsub on" : "gsub"} onClick={() => pickSub(s.id)}>
+              {s.label}
             </button>
-          )}
+          ))}
         </div>
 
-        <TrackedList
-          data={data}
-          index={index}
-          tracked={tracked}
-          cats={cats}
-          chosen={chosen}
-          stepEach={stepEach}
-          onStepEach={setStepEach}
-          onCur={(lk, v) => setField(lk, "cur", v)}
-          onTgt={(lk, v) => setField(lk, "tgt", v)}
-          onRemove={remove}
-        />
+        {active && (
+          <>
+            <AddGear
+              index={index}
+              cats={subCats}
+              owned={active.gear}
+              onAdd={(piece) =>
+                updateMember(active.id, (m) => ({
+                  ...m,
+                  gear: {
+                    ...m.gear,
+                    [piece.pieceKey]: {
+                      cur: { t: tiersOf(piece)[0] ?? 1, r: raritiesAtTier(piece, tiersOf(piece)[0] ?? 1)[0] || "Common" },
+                      tgt: topTarget(piece),
+                    },
+                  },
+                }))
+              }
+            />
+            <TrackingPanel
+              data={data}
+              index={index}
+              member={active}
+              cats={subCats}
+              stepEach={stepEach}
+              onStepEach={setStepEach}
+              chosen={chosen}
+              onUpdate={(fn) => updateMember(active.id, fn)}
+            />
+          </>
+        )}
       </section>
 
       <section className="col-right">
+        <div className="gear-scope">
+          <span className="muted small">Shopping list for:</span>
+          <select value={scope} onChange={(e) => setScope(e.target.value)}>
+            <option value="all">Whole village ({village.length})</option>
+            {village.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </div>
         {upgradeCount === 0 ? (
           <div className="panel empty">
-            <h2>Track your gear upgrades</h2>
+            <h2>Track gear upgrades for your village</h2>
             <p>
-              Pull your equipped gear with your Bitjita player ID (or add pieces manually), then set
-              a <b>target tier</b> for each. BitForge rolls up every upgrade's materials and{" "}
-              <b>divides them by profession</b> — with the same storage, hardset and progress tools
-              as the Build Planner.
+              Add people, pull their gear &amp; levels from Bitjita, and set the tier and{" "}
+              <b>rarity</b> you want each piece to reach. BitForge totals every upgrade's materials
+              and <b>divides them by profession</b> — for one person or the whole village.
             </p>
             <p className="hint">
-              Pieces already at their target tier won't add to the list — bump a target above its
-              current tier to see what it costs.
+              New pieces default to their top craftable tier &amp; rarity, so you'll see what it
+              takes to max everything out. Lower a target if that's too far.
             </p>
           </div>
         ) : (
@@ -315,161 +294,432 @@ export function GearTab({
   );
 }
 
-function TrackedList({
+function MemberBar({
+  village,
+  activeId,
+  onSelect,
+  onAdd,
+}: {
+  village: Member[];
+  activeId: string;
+  onSelect: (id: string) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="member-bar">
+      {village.map((m) => (
+        <button
+          key={m.id}
+          className={m.id === activeId ? "member-chip on" : "member-chip"}
+          onClick={() => onSelect(m.id)}
+        >
+          {m.name}
+          <span className="member-count">{Object.keys(m.gear).length}</span>
+        </button>
+      ))}
+      <button className="member-add" onClick={onAdd} title="Add a person">
+        + Person
+      </button>
+    </div>
+  );
+}
+
+function MemberPanel({
   data,
   index,
-  tracked,
-  cats,
-  chosen,
-  stepEach,
-  onStepEach,
-  onCur,
-  onTgt,
+  member,
+  onUpdate,
   onRemove,
+  canRemove,
 }: {
   data: GameData;
   index: GearIndex;
-  tracked: Tracked[];
-  cats: ReturnType<typeof categoriesInOrder>;
-  chosen: Record<ItemKey, number>;
+  member: Member;
+  onUpdate: (fn: (m: Member) => Member) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [showLevels, setShowLevels] = useState(false);
+
+  async function pull() {
+    const id = member.playerId.trim();
+    if (!/^\d{5,25}$/.test(id)) {
+      setMsg("Enter a numeric player ID (from bitjita.com/players/…).");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    const [eq, prof] = await Promise.all([pullEquipment(data, id), pullPlayer(id)]);
+    setBusy(false);
+    if (!eq && !prof) {
+      setMsg("Couldn't reach Bitjita for that player. Check the ID.");
+      return;
+    }
+    onUpdate((m) => {
+      const gear = { ...m.gear };
+      let added = 0;
+      for (const it of eq?.items ?? []) {
+        const piece = pieceForItem(data, index, it.key);
+        if (!piece) continue;
+        const cur = {
+          t: it.tier ?? tiersOf(piece)[0] ?? 1,
+          r: it.rarity || raritiesAtTier(piece, it.tier ?? tiersOf(piece)[0] ?? 1)[0] || "Common",
+        };
+        const existing = gear[piece.pieceKey];
+        gear[piece.pieceKey] = { cur, tgt: existing?.tgt ?? topTarget(piece) };
+        added++;
+      }
+      return {
+        ...m,
+        gear,
+        skills: prof?.skills?.length ? prof.skills : m.skills,
+        name: m.name === "Me" && prof?.name ? prof.name : m.name,
+      };
+    });
+    const parts = [];
+    if (eq) parts.push(`${eq.count} pieces`);
+    if (prof) parts.push(`${prof.skills.length} skills`);
+    setMsg(parts.length ? `Pulled ${parts.join(" + ")}.` : "Nothing found for that player.");
+  }
+
+  const topSkills = [...member.skills].sort((a, b) => b.level - a.level);
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <input
+          className="member-name"
+          value={member.name}
+          onChange={(e) => onUpdate((m) => ({ ...m, name: e.target.value }))}
+          placeholder="Name"
+        />
+        <div className="spacer" />
+        {canRemove && (
+          <button className="btn ghost small" onClick={onRemove} title="Remove this person">
+            Remove
+          </button>
+        )}
+      </div>
+      <div className="store-row">
+        <input
+          className="search"
+          placeholder="Bitjita player ID"
+          value={member.playerId}
+          onChange={(e) => onUpdate((m) => ({ ...m, playerId: e.target.value }))}
+          inputMode="numeric"
+        />
+        <button className="btn primary small" disabled={busy} onClick={pull}>
+          {busy ? "Pulling…" : "Pull gear + levels"}
+        </button>
+      </div>
+      {msg && <div className="store-msg">{msg}</div>}
+      {member.skills.length > 0 && (
+        <div className="levels">
+          <button className="levels-head" onClick={() => setShowLevels((s) => !s)}>
+            <span className="chev">{showLevels ? "▾" : "▸"}</span>
+            Levels ({member.skills.length} skills)
+          </button>
+          {showLevels && (
+            <ul className="levels-list">
+              {topSkills.map((s) => (
+                <li key={s.name}>
+                  <span className="lvl-name">{s.name}</span>
+                  <span className="lvl-num">Lv {s.level}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddGear({
+  index,
+  cats,
+  owned,
+  onAdd,
+}: {
+  index: GearIndex;
+  cats: string[];
+  owned: Record<string, PieceState>;
+  onAdd: (piece: GearPiece) => void;
+}) {
+  const [q, setQ] = useState("");
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return [];
+    const out: GearPiece[] = [];
+    for (const cat of cats) {
+      for (const piece of index.byCategory.get(cat as GearPiece["category"]) ?? []) {
+        if (owned[piece.pieceKey]) continue;
+        if (`${piece.suffix} ${piece.tag}`.toLowerCase().includes(term)) out.push(piece);
+        if (out.length > 60) break;
+      }
+    }
+    return out.slice(0, 16);
+  }, [q, cats, index, owned]);
+
+  return (
+    <div className="panel gear-addpanel">
+      <div className="gear-add">
+        <input
+          className="search"
+          placeholder="Add gear… (e.g. axe, shortsword, charm)"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        {results.length > 0 && (
+          <ul className="gear-add-results">
+            {results.map((piece) => (
+              <li key={piece.pieceKey}>
+                <button
+                  onClick={() => {
+                    onAdd(piece);
+                    setQ("");
+                  }}
+                >
+                  <span className="gear-add-name">{piece.suffix}</span>
+                  <span className="gear-add-meta">{piece.tag}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TrackingPanel({
+  data,
+  index,
+  member,
+  cats,
+  stepEach,
+  onStepEach,
+  chosen,
+  onUpdate,
+}: {
+  data: GameData;
+  index: GearIndex;
+  member: Member;
+  cats: string[];
   stepEach: boolean;
   onStepEach: (b: boolean) => void;
-  onCur: (lineKey: string, v: number) => void;
-  onTgt: (lineKey: string, v: number) => void;
-  onRemove: (lineKey: string) => void;
+  chosen: Record<ItemKey, number>;
+  onUpdate: (fn: (m: Member) => Member) => void;
 }) {
-  if (!tracked.length) return null;
-  // Group tracked pieces by category.
-  const byCat = new Map<string, Tracked[]>();
-  for (const t of tracked) {
-    const line = index.lines.get(t.lineKey);
-    if (!line) continue;
-    if (!byCat.has(line.category)) byCat.set(line.category, []);
-    byCat.get(line.category)!.push(t);
+  const entries = Object.entries(member.gear)
+    .map(([pk, st]) => ({ piece: index.pieces.get(pk), st, pk }))
+    .filter((e) => e.piece && cats.includes(e.piece.category)) as {
+    piece: GearPiece;
+    st: PieceState;
+    pk: string;
+  }[];
+  entries.sort((a, b) => a.piece.tag.localeCompare(b.piece.tag) || a.piece.suffix.localeCompare(b.piece.suffix));
+
+  function setState(pk: string, st: PieceState) {
+    onUpdate((m) => ({ ...m, gear: { ...m.gear, [pk]: st } }));
+  }
+  function remove(pk: string) {
+    onUpdate((m) => {
+      const gear = { ...m.gear };
+      delete gear[pk];
+      return { ...m, gear };
+    });
+  }
+  function maxAll() {
+    onUpdate((m) => {
+      const gear = { ...m.gear };
+      for (const { pk, piece } of entries) gear[pk] = { ...gear[pk], tgt: topTarget(piece) };
+      return { ...m, gear };
+    });
+  }
+
+  function levelFor(piece: GearPiece): number | null {
+    const prof = professionOf(data, piece).toLowerCase();
+    if (!prof) return null;
+    const s = member.skills.find(
+      (x) => x.name.toLowerCase() === prof || x.name.toLowerCase().includes(prof) || prof.includes(x.name.toLowerCase())
+    );
+    return s ? s.level : null;
+  }
+
+  if (!entries.length) {
+    return (
+      <div className="panel">
+        <p className="hint" style={{ margin: 0 }}>
+          No {SUBTABS.find((s) => s.cats === cats || s.cats.join() === cats.join())?.label.toLowerCase() ?? "gear"} tracked
+          for {member.name} yet — pull from Bitjita or add some above.
+        </p>
+      </div>
+    );
   }
 
   return (
     <div className="panel">
       <div className="panel-head">
-        <h2>Tracking</h2>
+        <h2>{member.name}'s gear</h2>
         <div className="spacer" />
-        <span className="muted small">{tracked.length} pieces</span>
+        <button className="btn ghost small" onClick={maxAll} title="Set every target to top tier & rarity">
+          Max all ★
+        </button>
       </div>
       <label className="gear-step-toggle" title="Count crafting every tier on the way up, not just the final one">
         <input type="checkbox" checked={stepEach} onChange={(e) => onStepEach(e.target.checked)} />
         Step through every tier (realistic grind)
       </label>
-      {cats
-        .filter((c) => byCat.has(c.id))
-        .map((c) => (
-          <div key={c.id} className="gear-cat">
-            <div className="gear-cat-head">{c.label}</div>
-            <ul className="gear-list">
-              {byCat.get(c.id)!.map((t) => (
-                <GearRow
-                  key={t.lineKey}
-                  data={data}
-                  line={index.lines.get(t.lineKey)!}
-                  t={t}
-                  chosen={chosen}
-                  onCur={onCur}
-                  onTgt={onTgt}
-                  onRemove={onRemove}
-                />
-              ))}
-            </ul>
-          </div>
+      <ul className="gear-list">
+        {entries.map(({ piece, st, pk }) => (
+          <PieceRow
+            key={pk}
+            data={data}
+            piece={piece}
+            st={st}
+            level={levelFor(piece)}
+            stepEach={stepEach}
+            chosen={chosen}
+            onChange={(next) => setState(pk, next)}
+            onRemove={() => remove(pk)}
+          />
         ))}
+      </ul>
     </div>
   );
 }
 
-function GearRow({
+function PieceRow({
   data,
-  line,
-  t,
+  piece,
+  st,
+  level,
+  stepEach,
   chosen,
-  onCur,
-  onTgt,
+  onChange,
   onRemove,
 }: {
   data: GameData;
-  line: GearLine;
-  t: Tracked;
+  piece: GearPiece;
+  st: PieceState;
+  level: number | null;
+  stepEach: boolean;
   chosen: Record<ItemKey, number>;
-  onCur: (lineKey: string, v: number) => void;
-  onTgt: (lineKey: string, v: number) => void;
-  onRemove: (lineKey: string) => void;
+  onChange: (st: PieceState) => void;
+  onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const tiers = [...new Set(line.items.map((i) => i.tier))].sort((a, b) => a - b);
-  const ctiers = craftableTiers(line);
-  const targetItem = resolveTarget(line, t.tgt);
-  const upgrading = t.tgt > t.cur;
-  const steps = upgrading ? stepsBetween(line, t.cur, t.tgt) : [];
+  const allTiers = tiersOf(piece);
+  const ctiers = craftableTiers(piece);
+  const upgrading = isUpgrade(st.cur.t, st.cur.r, st.tgt.t, st.tgt.r);
+  const rec = level != null ? recommendedTier(data, piece, level) : null;
+  const targetItem = resolve(piece, st.tgt.t, st.tgt.r);
 
-  // Per-tier cost, computed only when the breakdown is open.
+  // Keep a rarity valid for the chosen tier.
+  function curTier(t: number) {
+    const rs = raritiesAtTier(piece, t, false);
+    const r = rs.includes(st.cur.r) ? st.cur.r : rs[0] || "Common";
+    onChange({ ...st, cur: { t, r } });
+  }
+  function curRar(r: string) {
+    onChange({ ...st, cur: { ...st.cur, r } });
+  }
+  function tgtTier(t: number) {
+    const rs = raritiesAtTier(piece, t, true);
+    const r = rs.includes(st.tgt.r) ? st.tgt.r : rs[rs.length - 1] || "Common";
+    onChange({ ...st, tgt: { t, r } });
+  }
+  function tgtRar(r: string) {
+    onChange({ ...st, tgt: { ...st.tgt, r } });
+  }
+  function setTop() {
+    const t = maxCraftableTier(piece);
+    onChange({ ...st, tgt: { t, r: topRarityAtTier(piece, t) } });
+  }
+  function useRec() {
+    if (rec == null) return;
+    onChange({ ...st, tgt: { t: rec, r: topRarityAtTier(piece, rec) } });
+  }
+
+  const curRarities = raritiesAtTier(piece, st.cur.t, false);
+  const tgtRarities = raritiesAtTier(piece, st.tgt.t, true);
+  const steps = stepEach && st.tgt.t > st.cur.t ? stepsBetween(piece, st.cur.t, st.tgt.t, st.tgt.r) : [];
+
   const stepCosts = useMemo(() => {
     if (!open) return [];
-    return steps.map((item) => {
-      const plan = planBuild(data, { name: "", targets: [{ t: "i", k: item.key, q: 1 }] }, chosen);
-      const units = plan.lines.reduce((s, l) => s + l.qty, 0);
-      return { item, mats: plan.lines.length, raw: plan.raw.length, units };
+    const list = steps.length ? steps : targetItem ? [targetItem] : [];
+    return list.map((item) => {
+      const p = planBuild(data, { name: "", targets: [{ t: "i", k: item.key, q: 1 }] }, chosen);
+      return { item, mats: p.lines.length, units: p.lines.reduce((s, l) => s + l.qty, 0) };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, t.cur, t.tgt, line.lineKey, data, chosen]);
+  }, [open, st.cur.t, st.tgt.t, st.tgt.r, piece.pieceKey, stepEach, data, chosen]);
 
   return (
     <li className={upgrading ? "gear-row" : "gear-row flat"}>
       <div className="gear-row-main">
-        {upgrading && steps.length > 0 ? (
-          <button className="gear-expand" onClick={() => setOpen((o) => !o)} title="Per-tier cost breakdown">
-            <span className="gear-chev">{open ? "▾" : "▸"}</span>
-            <span className="gear-name">
-              {line.suffix}
-              <span className="gear-rarity">{line.rarity}</span>
-            </span>
-          </button>
-        ) : (
+        <button className="gear-expand" onClick={() => setOpen((o) => !o)} title="Per-tier cost breakdown">
+          <span className="gear-chev">{open ? "▾" : "▸"}</span>
           <span className="gear-name">
-            {line.suffix}
-            <span className="gear-rarity">{line.rarity}</span>
+            {piece.suffix}
+            <span className="gear-tagmini">{piece.tag}</span>
           </span>
+        </button>
+        {rec != null && (
+          <button
+            className={`gear-rec${st.cur.t >= rec ? " ok" : ""}`}
+            onClick={useRec}
+            title={`At Lv ${level}, this should be about T${rec}. Click to target it.`}
+          >
+            rec T{rec}
+          </button>
         )}
-        <button className="gear-x" onClick={() => onRemove(t.lineKey)} title="Stop tracking">
+        <button className="gear-x" onClick={onRemove} title="Stop tracking">
           ×
         </button>
       </div>
       <div className="gear-row-tiers">
-        <label className="gear-tier">
-          <span>Have</span>
-          <select value={t.cur} onChange={(e) => onCur(t.lineKey, Number(e.target.value))}>
-            {tiers.map((tt) => (
-              <option key={tt} value={tt}>
-                T{tt}
-              </option>
-            ))}
-          </select>
-        </label>
+        <span className="gt-label">Have</span>
+        <select className="gt-sel" value={st.cur.t} onChange={(e) => curTier(Number(e.target.value))}>
+          {allTiers.map((t) => (
+            <option key={t} value={t}>
+              T{t}
+            </option>
+          ))}
+        </select>
+        <select className="gt-sel rar" value={st.cur.r} onChange={(e) => curRar(e.target.value)}>
+          {curRarities.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
         <span className="gear-arrow">→</span>
-        <label className="gear-tier">
-          <span>Target</span>
-          <select value={t.tgt} onChange={(e) => onTgt(t.lineKey, Number(e.target.value))}>
-            {ctiers.map((tt) => (
-              <option key={tt} value={tt}>
-                T{tt}
-              </option>
-            ))}
-          </select>
-        </label>
-        {upgrading && targetItem ? (
-          <span className="gear-target-name" title="Craft target">
-            {itemName(data, targetItem.key)}
-          </span>
-        ) : (
-          <span className="gear-maxed">at target</span>
-        )}
+        <span className="gt-label">Want</span>
+        <select className="gt-sel" value={st.tgt.t} onChange={(e) => tgtTier(Number(e.target.value))}>
+          {ctiers.map((t) => (
+            <option key={t} value={t}>
+              T{t}
+            </option>
+          ))}
+        </select>
+        <select className="gt-sel rar" value={st.tgt.r} onChange={(e) => tgtRar(e.target.value)}>
+          {tgtRarities.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <button className="gear-top" onClick={setTop} title="Top craftable tier & rarity">
+          ★
+        </button>
       </div>
+      {upgrading && targetItem && (
+        <div className="gear-target-name">→ {itemName(data, targetItem.key)}</div>
+      )}
       {open && stepCosts.length > 0 && (
         <ol className="gear-steps">
           {stepCosts.map(({ item, mats, units }) => (

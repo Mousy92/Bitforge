@@ -82,6 +82,29 @@ export async function pullEquipment(
   }
 }
 
+export interface PlayerSkill {
+  name: string;
+  level: number;
+}
+export interface PlayerProfile {
+  name: string | null;
+  skills: PlayerSkill[];
+}
+
+/** Pull a player's profile (name + skill levels) from Bitjita. Null on failure. */
+export async function pullPlayer(player: string): Promise<PlayerProfile | null> {
+  try {
+    const res = await fetch(
+      `${import.meta.env.BASE_URL}api/player?player=${encodeURIComponent(player)}`
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as { name?: string | null; skills?: PlayerSkill[] };
+    return { name: d.name ?? null, skills: Array.isArray(d.skills) ? d.skills : [] };
+  } catch {
+    return null;
+  }
+}
+
 /** Pull a claim's on-hand storage from Bitjita (via our proxy) and map it to
  *  canonical plan keys. Returns null on failure. */
 export async function pullInventory(
