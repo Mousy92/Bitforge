@@ -1,48 +1,54 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type GameData, type ItemKey, itemName, recipesFor } from "../data";
 import type { Plan, PlanLine } from "../engine";
 
 type View = "profession" | "raw" | "flat";
 type Progress = Record<ItemKey, number>;
 
+const PROG_PREFIX = "bitforge:prog:";
+
 export function PlanView({
   data,
   plan,
   chosen,
   onChoose,
-  progress,
-  onHave,
+  buildSig,
+  storage,
 }: {
   data: GameData;
   plan: Plan;
   chosen: Record<ItemKey, number>;
   onChoose: (key: ItemKey, idx: number) => void;
-  progress: Progress;
-  onHave: (key: ItemKey, n: number) => void;
+  buildSig: string;
+  storage?: Record<ItemKey, number> | null;
 }) {
   const [view, setView] = useState<View>("profession");
-  const setHave = onHave;
-  const [hideDone, setHideDone] = useState<boolean>(() => {
+  const [progress, setProgress] = useState<Progress>({});
+
+  // Load/save progress scoped to this build.
+  useEffect(() => {
     try {
-      return localStorage.getItem("bitforge:hidedone") !== "0";
+      const raw = localStorage.getItem(PROG_PREFIX + buildSig);
+      setProgress(raw ? JSON.parse(raw) : {});
     } catch {
-      return true;
+      setProgress({});
     }
-  });
-  function toggleHideDone(b: boolean) {
-    setHideDone(b);
-    try {
-      localStorage.setItem("bitforge:hidedone", b ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
+  }, [buildSig]);
+  function setHave(key: ItemKey, have: number) {
+    setProgress((p) => {
+      const next = { ...p, [key]: Math.max(0, have) };
+      try {
+        localStorage.setItem(PROG_PREFIX + buildSig, JSON.stringify(next));
+      } catch {
+        /* storage may be unavailable; progress just won't persist */
+      }
+      return next;
+    });
   }
 
   const totalDistinct = plan.lines.length;
   const rawCount = plan.raw.length;
   const professions = plan.byProfession.length;
-  const effTop = (l: PlanLine) => (progress[l.key] || 0) + l.onHand;
-  const remaining = plan.lines.filter((l) => effTop(l) < l.qty).length;
 
   function copyText() {
     const txt = planToText(data, plan);
@@ -54,10 +60,6 @@ export function PlanView({
       <div className="panel-head">
         <h2>Materials needed</h2>
         <div className="spacer" />
-        <label className="hide-done" title="Hide items you've fully gathered or already have in storage">
-          <input type="checkbox" checked={hideDone} onChange={(e) => toggleHideDone(e.target.checked)} />
-          Hide completed
-        </label>
         <button className="btn ghost small" onClick={copyText}>
           Copy as text
         </button>
@@ -103,12 +105,6 @@ export function PlanView({
         </div>
       )}
 
-      {hideDone && remaining === 0 && (
-        <div className="done-banner">
-          ✅ Everything's gathered or already in storage — nothing left to collect!
-        </div>
-      )}
-
       {view === "profession" &&
         plan.byProfession.map((g) => (
           <ProfessionBlock
@@ -120,7 +116,7 @@ export function PlanView({
             onHave={setHave}
             chosen={chosen}
             onChoose={onChoose}
-            hideDone={hideDone}
+            storage={storage}
           />
         ))}
 
@@ -134,7 +130,7 @@ export function PlanView({
           chosen={chosen}
           onChoose={onChoose}
           flatProf
-            hideDone={hideDone}
+          storage={storage}
         />
       )}
 
@@ -148,40 +144,8 @@ export function PlanView({
           chosen={chosen}
           onChoose={onChoose}
           flatProf
-          hideDone={hideDone}
+          storage={storage}
         />
-      )}
-
-      {plan.consumed.length > 0 && <ConsumedLog consumed={plan.consumed} />}
-    </div>
-  );
-}
-
-function ConsumedLog({ consumed }: { consumed: Plan["consumed"] }) {
-  const [open, setOpen] = useState(false);
-  const total = consumed.reduce((s, c) => s + c.qty, 0);
-  return (
-    <div className="profblock consumed">
-      <button className="profhead" onClick={() => setOpen((o) => !o)}>
-        <span className="chev">{open ? "▾" : "▸"}</span>
-        <span className="profname">Consumption log</span>
-        <span className="profmeta">
-          {consumed.length} materials · {total.toLocaleString()} total used by completed components
-        </span>
-      </button>
-      {open && (
-        <ul className="matlist">
-          {consumed.map((c) => (
-            <li key={c.key} className="mat">
-              <span className="m-qty">{c.qty.toLocaleString()}</span>
-              <span className="m-name">
-                {c.name}
-                {c.tier > 0 && <span className="m-tier">T{c.tier}</span>}
-                <span className="m-prof">{c.profession}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );
@@ -205,7 +169,7 @@ function ProfessionBlock({
   chosen,
   onChoose,
   flatProf,
-  hideDone,
+  storage,
 }: {
   data: GameData;
   title: string;
@@ -215,16 +179,13 @@ function ProfessionBlock({
   chosen: Record<ItemKey, number>;
   onChoose: (key: ItemKey, idx: number) => void;
   flatProf?: boolean;
-  hideDone?: boolean;
+  storage?: Record<ItemKey, number> | null;
 }) {
   const [open, setOpen] = useState(true);
-  // on-hand (from pulled storage) is already applied in the engine as l.onHand.
-  const effHave = (l: PlanLine) => (progress[l.key] || 0) + l.onHand;
+  const stored = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
+  const effHave = (l: PlanLine) => (progress[l.key] || 0) + stored(l.key);
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
-  const visible = hideDone ? lines.filter((l) => effHave(l) < l.qty) : lines;
-  // When hiding completed items, drop a fully-finished section entirely.
-  if (hideDone && visible.length === 0) return null;
 
   return (
     <div className="profblock">
@@ -232,9 +193,7 @@ function ProfessionBlock({
         <span className="chev">{open ? "▾" : "▸"}</span>
         <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
         <span className="profmeta">
-          {hideDone && visible.length !== lines.length
-            ? `${visible.length} left · ${lines.length} total`
-            : `${lines.length} ${lines.length === 1 ? "item" : "items"}`}
+          {lines.length} {lines.length === 1 ? "item" : "items"}
         </span>
         <span className="profbar">
           <span className="profbar-fill" style={{ width: `${pct}%` }} />
@@ -243,9 +202,9 @@ function ProfessionBlock({
       </button>
       {open && (
         <ul className="matlist">
-          {visible.map((l) => {
+          {lines.map((l) => {
             const have = progress[l.key] || 0;
-            const inStore = l.onHand;
+            const inStore = stored(l.key);
             const eff = have + inStore;
             const complete = eff >= l.qty;
             const remaining = Math.max(0, l.qty - eff);

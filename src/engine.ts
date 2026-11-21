@@ -15,8 +15,7 @@ import type { Build } from "./model";
 export interface PlanLine {
   key: ItemKey;
   name: string;
-  qty: number; // total (gross) quantity needed
-  onHand: number; // quantity already owned (consumed from storage), <= qty
+  qty: number; // total quantity needed
   tier: number;
   rarity: string;
   profession: string;
@@ -41,14 +40,6 @@ export interface ProfessionGroup {
   count: number;
 }
 
-export interface ConsumedLine {
-  key: ItemKey;
-  name: string;
-  qty: number;
-  profession: string;
-  tier: number;
-}
-
 export interface Plan {
   /** construction lines for the target buildings themselves */
   builds: BuildLine[];
@@ -58,8 +49,6 @@ export interface Plan {
   byProfession: ProfessionGroup[];
   /** only the raw/gathered leaves (nothing crafts them) */
   raw: PlanLine[];
-  /** materials already consumed by completed components (the running log) */
-  consumed: ConsumedLine[];
   warnings: string[];
 }
 
@@ -89,69 +78,39 @@ const PROF_ORDER = [
 ];
 
 /**
- * Expand `build` into a plan of NET requirements.
+ * Expand `build` into a full plan.
  * @param chosen optional map of itemKey -> recipe index, when an item has
  *               multiple recipes and the user picked a non-default one.
- * @param onHand optional map of itemKey -> quantity already owned (e.g. pulled
- *               from storage). Owned quantities are consumed as the tree is
- *               walked, so having an intermediate item removes its whole
- *               ingredient sub-tree — you only gather/craft the shortfall.
  */
 export function planBuild(
   data: GameData,
   build: Build,
-  chosen: Record<ItemKey, number> = {},
-  onHand: Record<ItemKey, number> = {}
+  chosen: Record<ItemKey, number> = {}
 ): Plan {
-  const totals = new Map<ItemKey, number>(); // gross quantity referenced
-  const used = new Map<ItemKey, number>(); // on-hand applied (for display)
-  const consumedMap = new Map<ItemKey, number>(); // inputs eaten by completed components
-  const left: Record<ItemKey, number> = { ...onHand }; // remaining on-hand
+  const totals = new Map<ItemKey, number>();
   const warnings: string[] = [];
   const buildings = new Map<number, number>(); // building id -> qty
 
-  // Walk a required item: record the gross need, consume any on-hand stock, and
-  // only recurse into the recipe for the shortfall. A completed component (its
-  // need covered by on-hand) has its direct inputs recorded in the consumption
-  // log instead of being expanded. `path` guards cycles.
+  // Walk a required item, accumulating totals and recursing into its recipe.
+  // `path` guards against any residual cycles (packaging is already stripped
+  // upstream, but defensive cycle handling keeps the UI from ever hanging).
   function walk(key: ItemKey, qty: number, depth: number, path: Set<ItemKey>) {
     const rk = resolveKey(data, key);
     totals.set(rk, (totals.get(rk) || 0) + qty);
 
-    // Consume on-hand stock first; the rest is what we still need.
-    let take = 0;
-    const avail = left[rk] || 0;
-    if (avail > 0) {
-      take = Math.min(qty, avail);
-      left[rk] = avail - take;
-      used.set(rk, (used.get(rk) || 0) + take);
-    }
-    const net = qty - take;
-
     const recs = recipesFor(data, rk);
-    const cyclic = depth >= MAX_DEPTH || path.has(rk);
-    if (recs.length && !cyclic) {
-      const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
-      const r = recs[idx];
-      // Log the inputs consumed by the portion already made (completed component).
-      if (take > 0) {
-        const madeBatches = Math.ceil(take / (r.out || 1));
-        for (const [k, id, q] of r.mats) {
-          const ck = resolveKey(data, `${k}${id}`);
-          consumedMap.set(ck, (consumedMap.get(ck) || 0) + q * madeBatches);
-        }
-      }
-      // Expand only the shortfall.
-      if (net > 0) {
-        const batches = Math.ceil(net / (r.out || 1));
-        const nextPath = new Set(path);
-        nextPath.add(rk);
-        for (const [k, id, q] of r.mats) {
-          walk(`${k}${id}`, q * batches, depth + 1, nextPath);
-        }
-      }
-    } else if (net > 0 && cyclic && path.has(rk)) {
-      warnings.push(`Recipe cycle at ${data.items[rk]?.n ?? rk}`);
+    if (!recs.length) return; // raw / gathered leaf
+    if (depth >= MAX_DEPTH || path.has(rk)) {
+      if (path.has(rk)) warnings.push(`Recipe cycle at ${data.items[rk]?.n ?? rk}`);
+      return;
+    }
+    const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
+    const r = recs[idx];
+    const batches = Math.ceil(qty / (r.out || 1));
+    const nextPath = new Set(path);
+    nextPath.add(rk);
+    for (const [k, id, q] of r.mats) {
+      walk(`${k}${id}`, q * batches, depth + 1, nextPath);
     }
   }
 
@@ -184,7 +143,6 @@ export function planBuild(
       key,
       name: it?.n ?? key,
       qty,
-      onHand: Math.min(qty, used.get(key) || 0),
       tier: it?.t ?? -1,
       rarity: it?.r ?? "",
       profession: professionFor(data, key, chosen),
@@ -220,20 +178,7 @@ export function planBuild(
 
   const raw = lines.filter((l) => !l.craftable);
 
-  const consumed: ConsumedLine[] = [...consumedMap.entries()]
-    .map(([key, qty]) => {
-      const it = data.items[key];
-      return {
-        key,
-        name: it?.n ?? key,
-        qty,
-        profession: professionFor(data, key, chosen),
-        tier: it?.t ?? -1,
-      };
-    })
-    .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
-
-  return { builds, lines, byProfession, raw, consumed, warnings: dedupe(warnings) };
+  return { builds, lines, byProfession, raw, warnings: dedupe(warnings) };
 }
 
 function buildingTypeLabel(data: GameData, bt: number): string | undefined {
