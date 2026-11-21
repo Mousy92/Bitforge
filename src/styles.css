@@ -233,6 +233,16 @@ a:hover { text-decoration: underline; }
 
 .warnings { background: #2a1e14; border: 1px solid #553; color: #e7b26b; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; margin-bottom: 12px; }
 
+/* materials filter */
+.mat-filter { position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.mat-filter .search { flex: 1; }
+.mat-filter-x {
+  position: absolute; right: 70px; background: transparent; border: none; color: var(--muted);
+  font-size: 18px; cursor: pointer; line-height: 1;
+}
+.mat-filter-x:hover { color: var(--danger); }
+.mat-filter-count { font: 12px var(--mono); color: var(--amber); white-space: nowrap; }
+
 /* profession blocks */
 .profblock { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; overflow: hidden; background: var(--bg2); }
 .profhead { display: flex; align-items: center; background: var(--panel2); }

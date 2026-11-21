@@ -30,6 +30,7 @@ export function PlanView({
 }) {
   const [view, setView] = useState<View>("profession");
   const [progress, setProgress] = useState<Progress>({});
+  const [filter, setFilter] = useState("");
 
   // Load/save progress scoped to this build.
   useEffect(() => {
@@ -103,6 +104,26 @@ export function PlanView({
         </button>
       </div>
 
+      <div className="mat-filter">
+        <input
+          className="search"
+          placeholder="Filter materials… (e.g. plank, ink, ingot)"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        {filter && (
+          <button className="mat-filter-x" onClick={() => setFilter("")} title="Clear filter">
+            ×
+          </button>
+        )}
+        {filter.trim() && (
+          <span className="mat-filter-count">
+            {plan.lines.filter((l) => l.name.toLowerCase().includes(filter.trim().toLowerCase())).length}{" "}
+            match
+          </span>
+        )}
+      </div>
+
       {plan.warnings.length > 0 && (
         <div className="warnings">
           {plan.warnings.map((w, i) => (
@@ -126,6 +147,7 @@ export function PlanView({
             overrides={overrides}
             onOverride={onOverride}
             onRefresh={onRefresh}
+            filter={filter}
           />
         ))}
 
@@ -143,6 +165,7 @@ export function PlanView({
           overrides={overrides}
           onOverride={onOverride}
           onRefresh={onRefresh}
+          filter={filter}
         />
       )}
 
@@ -160,6 +183,7 @@ export function PlanView({
           overrides={overrides}
           onOverride={onOverride}
           onRefresh={onRefresh}
+          filter={filter}
         />
       )}
     </div>
@@ -188,6 +212,7 @@ function ProfessionBlock({
   overrides,
   onOverride,
   onRefresh,
+  filter,
 }: {
   data: GameData;
   title: string;
@@ -201,6 +226,7 @@ function ProfessionBlock({
   overrides: Record<ItemKey, number>;
   onOverride: (key: ItemKey, n: number | null) => void;
   onRefresh: () => void;
+  filter?: string;
 }) {
   const [open, setOpen] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -209,6 +235,11 @@ function ProfessionBlock({
   // A hardset override wins; otherwise manual progress + pulled storage.
   const effHave = (l: PlanLine) =>
     hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key);
+  const term = (filter || "").trim().toLowerCase();
+  const shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
+  // When filtering, hide sections with no matches and auto-open matching ones.
+  if (term && shown.length === 0) return null;
+  const isOpen = term ? true : open;
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
 
@@ -225,10 +256,10 @@ function ProfessionBlock({
     <div className="profblock">
       <div className="profhead">
         <button className="profhead-main" onClick={() => setOpen((o) => !o)}>
-          <span className="chev">{open ? "▾" : "▸"}</span>
+          <span className="chev">{isOpen ? "▾" : "▸"}</span>
           <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
           <span className="profmeta">
-            {lines.length} {lines.length === 1 ? "item" : "items"}
+            {term ? `${shown.length} of ${lines.length}` : `${lines.length} ${lines.length === 1 ? "item" : "items"}`}
           </span>
           <span className="profbar">
             <span className="profbar-fill" style={{ width: `${pct}%` }} />
@@ -244,9 +275,9 @@ function ProfessionBlock({
           {refreshing ? "…" : "↻"}
         </button>
       </div>
-      {open && (
+      {isOpen && (
         <ul className="matlist">
-          {lines.map((l) => {
+          {shown.map((l) => {
             const eff = effHave(l);
             const complete = eff >= l.qty;
             const remaining = Math.max(0, l.qty - eff);
