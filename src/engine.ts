@@ -41,6 +41,14 @@ export interface ProfessionGroup {
   count: number;
 }
 
+export interface ConsumedLine {
+  key: ItemKey;
+  name: string;
+  qty: number;
+  profession: string;
+  tier: number;
+}
+
 export interface Plan {
   /** construction lines for the target buildings themselves */
   builds: BuildLine[];
@@ -50,6 +58,8 @@ export interface Plan {
   byProfession: ProfessionGroup[];
   /** only the raw/gathered leaves (nothing crafts them) */
   raw: PlanLine[];
+  /** materials already consumed by completed components (the running log) */
+  consumed: ConsumedLine[];
   warnings: string[];
 }
 
@@ -95,39 +105,53 @@ export function planBuild(
 ): Plan {
   const totals = new Map<ItemKey, number>(); // gross quantity referenced
   const used = new Map<ItemKey, number>(); // on-hand applied (for display)
+  const consumedMap = new Map<ItemKey, number>(); // inputs eaten by completed components
   const left: Record<ItemKey, number> = { ...onHand }; // remaining on-hand
   const warnings: string[] = [];
   const buildings = new Map<number, number>(); // building id -> qty
 
   // Walk a required item: record the gross need, consume any on-hand stock, and
-  // only recurse into the recipe for the shortfall. `path` guards cycles.
+  // only recurse into the recipe for the shortfall. A completed component (its
+  // need covered by on-hand) has its direct inputs recorded in the consumption
+  // log instead of being expanded. `path` guards cycles.
   function walk(key: ItemKey, qty: number, depth: number, path: Set<ItemKey>) {
     const rk = resolveKey(data, key);
     totals.set(rk, (totals.get(rk) || 0) + qty);
 
     // Consume on-hand stock first; the rest is what we still need.
+    let take = 0;
     const avail = left[rk] || 0;
     if (avail > 0) {
-      const take = Math.min(qty, avail);
+      take = Math.min(qty, avail);
       left[rk] = avail - take;
       used.set(rk, (used.get(rk) || 0) + take);
-      qty -= take;
     }
-    if (qty <= 0) return; // fully covered by stock -> prune sub-tree
+    const net = qty - take;
 
     const recs = recipesFor(data, rk);
-    if (!recs.length) return; // raw / gathered leaf
-    if (depth >= MAX_DEPTH || path.has(rk)) {
-      if (path.has(rk)) warnings.push(`Recipe cycle at ${data.items[rk]?.n ?? rk}`);
-      return;
-    }
-    const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
-    const r = recs[idx];
-    const batches = Math.ceil(qty / (r.out || 1));
-    const nextPath = new Set(path);
-    nextPath.add(rk);
-    for (const [k, id, q] of r.mats) {
-      walk(`${k}${id}`, q * batches, depth + 1, nextPath);
+    const cyclic = depth >= MAX_DEPTH || path.has(rk);
+    if (recs.length && !cyclic) {
+      const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
+      const r = recs[idx];
+      // Log the inputs consumed by the portion already made (completed component).
+      if (take > 0) {
+        const madeBatches = Math.ceil(take / (r.out || 1));
+        for (const [k, id, q] of r.mats) {
+          const ck = resolveKey(data, `${k}${id}`);
+          consumedMap.set(ck, (consumedMap.get(ck) || 0) + q * madeBatches);
+        }
+      }
+      // Expand only the shortfall.
+      if (net > 0) {
+        const batches = Math.ceil(net / (r.out || 1));
+        const nextPath = new Set(path);
+        nextPath.add(rk);
+        for (const [k, id, q] of r.mats) {
+          walk(`${k}${id}`, q * batches, depth + 1, nextPath);
+        }
+      }
+    } else if (net > 0 && cyclic && path.has(rk)) {
+      warnings.push(`Recipe cycle at ${data.items[rk]?.n ?? rk}`);
     }
   }
 
@@ -196,7 +220,20 @@ export function planBuild(
 
   const raw = lines.filter((l) => !l.craftable);
 
-  return { builds, lines, byProfession, raw, warnings: dedupe(warnings) };
+  const consumed: ConsumedLine[] = [...consumedMap.entries()]
+    .map(([key, qty]) => {
+      const it = data.items[key];
+      return {
+        key,
+        name: it?.n ?? key,
+        qty,
+        profession: professionFor(data, key, chosen),
+        tier: it?.t ?? -1,
+      };
+    })
+    .sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+
+  return { builds, lines, byProfession, raw, consumed, warnings: dedupe(warnings) };
 }
 
 function buildingTypeLabel(data: GameData, bt: number): string | undefined {

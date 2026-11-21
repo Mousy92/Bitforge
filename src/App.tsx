@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { type GameData, type ItemKey, loadGameData } from "./data";
+import { type GameData, type ItemKey, canonKey, loadGameData, recipesFor } from "./data";
 import { type Build, type Target, emptyBuild, targetId } from "./model";
 import { planBuild } from "./engine";
 import {
@@ -35,13 +35,17 @@ export default function App() {
       return null;
     }
   });
-  const [useStorage, setUseStorageState] = useState<boolean>(() => {
+  // Optional: also subtract RAW materials found in storage (off by default —
+  // raw materials are fungible, so they're only "spent" when a component is made).
+  const [subtractRaw, setSubtractRawState] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("bitforge:usestorage") !== "0";
+      return localStorage.getItem("bitforge:subtractraw") === "1";
     } catch {
-      return true;
+      return false;
     }
   });
+  // Completion progress per material (manual made/gathered counts), per build.
+  const [progress, setProgress] = useState<Record<ItemKey, number>>({});
   function setStorage(s: Record<ItemKey, number> | null) {
     setStorageState(s);
     try {
@@ -51,10 +55,10 @@ export default function App() {
       /* storage may be unavailable */
     }
   }
-  function setUseStorage(b: boolean) {
-    setUseStorageState(b);
+  function setSubtractRaw(b: boolean) {
+    setSubtractRawState(b);
     try {
-      localStorage.setItem("bitforge:usestorage", b ? "1" : "0");
+      localStorage.setItem("bitforge:subtractraw", b ? "1" : "0");
     } catch {
       /* ignore */
     }
@@ -79,11 +83,49 @@ export default function App() {
     if (build.targets.length || build.name) syncHash(build);
   }, [build]);
 
-  const plan = useMemo(
-    () => (data ? planBuild(data, build, chosen, useStorage && storage ? storage : {}) : null),
-    [data, build, chosen, storage, useStorage]
-  );
   const buildSig = useBuildSig(build);
+
+  // Load completion progress for this build, and persist on change.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("bitforge:prog:" + buildSig);
+      setProgress(raw ? JSON.parse(raw) : {});
+    } catch {
+      setProgress({});
+    }
+  }, [buildSig]);
+  function setHave(key: ItemKey, n: number) {
+    setProgress((p) => {
+      const next = { ...p, [key]: Math.max(0, n) };
+      try {
+        localStorage.setItem("bitforge:prog:" + buildSig, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
+
+  // On-hand = manual completion + storage. A COMPONENT (craftable) counts from
+  // storage automatically (you have it made). A RAW material counts from storage
+  // only when the user opts in via subtractRaw (fungible otherwise).
+  const onHand = useMemo(() => {
+    if (!data) return {};
+    const out: Record<ItemKey, number> = { ...progress };
+    if (storage) {
+      for (const [k, q] of Object.entries(storage)) {
+        const key = canonKey(data, k);
+        const isComponent = recipesFor(data, key).length > 0;
+        if (isComponent || subtractRaw) out[key] = (out[key] || 0) + q;
+      }
+    }
+    return out;
+  }, [data, progress, storage, subtractRaw]);
+
+  const plan = useMemo(
+    () => (data ? planBuild(data, build, chosen, onHand) : null),
+    [data, build, chosen, onHand]
+  );
 
   function addTarget(t: Target) {
     setBuild((b) => {
@@ -173,8 +215,8 @@ export default function App() {
               data={data}
               storage={storage}
               setStorage={setStorage}
-              useStorage={useStorage}
-              setUseStorage={setUseStorage}
+              subtractRaw={subtractRaw}
+              setSubtractRaw={setSubtractRaw}
             />
           </section>
 
@@ -187,7 +229,8 @@ export default function App() {
                 plan={plan}
                 chosen={chosen}
                 onChoose={(key, idx) => setChosen((c) => ({ ...c, [key]: idx }))}
-                buildSig={buildSig}
+                progress={progress}
+                onHave={setHave}
               />
             )}
           </section>
@@ -325,14 +368,14 @@ function StoragePanel({
   data,
   storage,
   setStorage,
-  useStorage,
-  setUseStorage,
+  subtractRaw,
+  setSubtractRaw,
 }: {
   data: GameData;
   storage: Record<ItemKey, number> | null;
   setStorage: (s: Record<ItemKey, number> | null) => void;
-  useStorage: boolean;
-  setUseStorage: (b: boolean) => void;
+  subtractRaw: boolean;
+  setSubtractRaw: (b: boolean) => void;
 }) {
   const [claim, setClaim] = useState<string>(() => {
     try {
@@ -364,7 +407,6 @@ function StoragePanel({
       return;
     }
     setStorage(res.totals);
-    setUseStorage(true);
     setMsg(`Pulled ${res.distinct.toLocaleString()} item types from storage.`);
   }
 
@@ -373,13 +415,13 @@ function StoragePanel({
       <div className="panel-head">
         <h2>My storage</h2>
         {storage && (
-          <label className="store-toggle">
+          <label className="store-toggle" title="Raw materials are fungible, so they're only subtracted when you opt in. Finished components are always counted.">
             <input
               type="checkbox"
-              checked={useStorage}
-              onChange={(e) => setUseStorage(e.target.checked)}
+              checked={subtractRaw}
+              onChange={(e) => setSubtractRaw(e.target.checked)}
             />
-            subtract from needs
+            also subtract raw materials
           </label>
         )}
       </div>
@@ -387,8 +429,9 @@ function StoragePanel({
         Pull your settlement's on-hand items from{" "}
         <a href="https://bitjita.com" target="_blank" rel="noreferrer">
           Bitjita
-        </a>{" "}
-        so the plan shows only what you still need.
+        </a>
+        . Finished <b>components</b> you already have drop off the list; raw
+        materials stay (they're fungible) unless you opt in above.
       </p>
       <div className="store-row">
         <input

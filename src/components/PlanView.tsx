@@ -1,27 +1,27 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { type GameData, type ItemKey, itemName, recipesFor } from "../data";
 import type { Plan, PlanLine } from "../engine";
 
 type View = "profession" | "raw" | "flat";
 type Progress = Record<ItemKey, number>;
 
-const PROG_PREFIX = "bitforge:prog:";
-
 export function PlanView({
   data,
   plan,
   chosen,
   onChoose,
-  buildSig,
+  progress,
+  onHave,
 }: {
   data: GameData;
   plan: Plan;
   chosen: Record<ItemKey, number>;
   onChoose: (key: ItemKey, idx: number) => void;
-  buildSig: string;
+  progress: Progress;
+  onHave: (key: ItemKey, n: number) => void;
 }) {
   const [view, setView] = useState<View>("profession");
-  const [progress, setProgress] = useState<Progress>({});
+  const setHave = onHave;
   const [hideDone, setHideDone] = useState<boolean>(() => {
     try {
       return localStorage.getItem("bitforge:hidedone") !== "0";
@@ -36,27 +36,6 @@ export function PlanView({
     } catch {
       /* ignore */
     }
-  }
-
-  // Load/save progress scoped to this build.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PROG_PREFIX + buildSig);
-      setProgress(raw ? JSON.parse(raw) : {});
-    } catch {
-      setProgress({});
-    }
-  }, [buildSig]);
-  function setHave(key: ItemKey, have: number) {
-    setProgress((p) => {
-      const next = { ...p, [key]: Math.max(0, have) };
-      try {
-        localStorage.setItem(PROG_PREFIX + buildSig, JSON.stringify(next));
-      } catch {
-        /* storage may be unavailable; progress just won't persist */
-      }
-      return next;
-    });
   }
 
   const totalDistinct = plan.lines.length;
@@ -169,8 +148,40 @@ export function PlanView({
           chosen={chosen}
           onChoose={onChoose}
           flatProf
-            hideDone={hideDone}
+          hideDone={hideDone}
         />
+      )}
+
+      {plan.consumed.length > 0 && <ConsumedLog consumed={plan.consumed} />}
+    </div>
+  );
+}
+
+function ConsumedLog({ consumed }: { consumed: Plan["consumed"] }) {
+  const [open, setOpen] = useState(false);
+  const total = consumed.reduce((s, c) => s + c.qty, 0);
+  return (
+    <div className="profblock consumed">
+      <button className="profhead" onClick={() => setOpen((o) => !o)}>
+        <span className="chev">{open ? "▾" : "▸"}</span>
+        <span className="profname">Consumption log</span>
+        <span className="profmeta">
+          {consumed.length} materials · {total.toLocaleString()} total used by completed components
+        </span>
+      </button>
+      {open && (
+        <ul className="matlist">
+          {consumed.map((c) => (
+            <li key={c.key} className="mat">
+              <span className="m-qty">{c.qty.toLocaleString()}</span>
+              <span className="m-name">
+                {c.name}
+                {c.tier > 0 && <span className="m-tier">T{c.tier}</span>}
+                <span className="m-prof">{c.profession}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
