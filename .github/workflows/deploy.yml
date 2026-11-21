@@ -33,7 +33,8 @@ jobs:
         run: |
           npx --yes wrangler@3 pages project create bitforge --production-branch=main \
             || echo "project create skipped (likely already exists) — continuing"
-          npx --yes wrangler@3 pages deploy dist --project-name=bitforge --branch=main
+          # Config-driven (reads wrangler.toml: output dir + KV binding).
+          npx --yes wrangler@3 pages deploy --branch=main
 
       - name: Attach custom domain bitforge.mousyhub.com (idempotent)
         env:

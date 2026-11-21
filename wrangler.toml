@@ -1,0 +1,9 @@
+# Cloudflare Pages config. Declares the build output and the KV binding used by
+# the save/short-link Functions (functions/api/builds*). Deploys read this file.
+name = "bitforge"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "BUILDS"
+id = "4cb3641fe9754c45a0c61a8cb15a2218"
