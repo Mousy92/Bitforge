@@ -121,6 +121,7 @@ a:hover { text-decoration: underline; }
 .r-add { font-size: 12px; color: var(--amber); opacity: 0; }
 .results li:hover .r-add { opacity: 1; }
 
+.sharebar { display: flex; gap: 6px; }
 .filter-btn { white-space: nowrap; }
 
 /* filters */

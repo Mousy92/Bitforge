@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { type GameData, type ItemKey, loadGameData } from "./data";
 import { type Build, type Target, emptyBuild, targetId } from "./model";
 import { planBuild } from "./engine";
-import { buildFromHash, decodeBuild, encodeBuild, shareUrl, syncHash } from "./share";
+import {
+  buildFromHash,
+  decodeBuild,
+  encodeBuild,
+  shareUrl,
+  shortIdFromHash,
+  shortShareUrl,
+  syncHash,
+} from "./share";
+import { loadBuildRemote, saveBuildRemote } from "./backend";
 import { Picker } from "./components/Picker";
 import { PlanView } from "./components/PlanView";
 import { TargetList } from "./components/TargetList";
@@ -19,6 +28,16 @@ export default function App() {
 
   useEffect(() => {
     loadGameData().then(setData).catch((e) => setErr(String(e)));
+  }, []);
+
+  // If opened via a short link (#s=<id>) and no inline build, fetch the saved one.
+  useEffect(() => {
+    const sid = shortIdFromHash();
+    if (sid && !buildFromHash()) {
+      loadBuildRemote(sid).then((b) => {
+        if (b) setBuild(b);
+      });
+    }
   }, []);
 
   // Keep the URL hash in sync so a refresh / copy always reflects the build.
@@ -172,23 +191,52 @@ function Header({
   );
 }
 
+async function toClipboard(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+  } catch {
+    prompt("Copy your link:", url);
+  }
+}
+
 function ShareBar({ build }: { build: Build }) {
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [shortMsg, setShortMsg] = useState<string | null>(null);
   const disabled = build.targets.length === 0;
-  async function copy() {
-    const url = shareUrl(build);
-    try {
-      await navigator.clipboard.writeText(url);
-    } catch {
-      prompt("Copy your share link:", url);
-    }
+
+  async function copyFull() {
+    await toClipboard(shareUrl(build));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
+
+  // Save server-side and copy a short link. Falls back to the full link if the
+  // backend isn't available (offline build, or before KV is configured).
+  async function saveShort() {
+    setSaving(true);
+    setShortMsg(null);
+    const id = await saveBuildRemote(build);
+    setSaving(false);
+    if (id) {
+      await toClipboard(shortShareUrl(id));
+      setShortMsg("Short link copied ✓");
+    } else {
+      await toClipboard(shareUrl(build));
+      setShortMsg("Saved offline — copied full link");
+    }
+    setTimeout(() => setShortMsg(null), 2200);
+  }
+
   return (
-    <button className="btn primary small" disabled={disabled} onClick={copy}>
-      {copied ? "Link copied ✓" : "Copy share link"}
-    </button>
+    <div className="sharebar">
+      <button className="btn ghost small" disabled={disabled} onClick={copyFull} title="A self-contained link that carries the whole build">
+        {copied ? "Copied ✓" : "Copy link"}
+      </button>
+      <button className="btn primary small" disabled={disabled || saving} onClick={saveShort} title="Save the build and get a short, shareable link">
+        {saving ? "Saving…" : shortMsg || "Save & share"}
+      </button>
+    </div>
   );
 }
 

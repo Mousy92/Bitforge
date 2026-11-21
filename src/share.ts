@@ -61,6 +61,17 @@ export function buildFromHash(): Build | null {
   return m ? decodeBuild(m[1]) : null;
 }
 
+/** A saved-build short id from the URL hash (#s=<id>), if present. */
+export function shortIdFromHash(): string | null {
+  const m = location.hash.match(/[#&]s=([A-Za-z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+/** Full short-link URL for a saved build id. */
+export function shortShareUrl(id: string): string {
+  return `${location.origin}${location.pathname}#s=${id}`;
+}
+
 /** Write the build into the URL hash without adding a history entry. */
 export function syncHash(build: Build): void {
   const code = encodeBuild(build);

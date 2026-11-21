@@ -1,0 +1,25 @@
+name: Create KV namespace
+
+# One-off helper: creates the "BUILDS" KV namespace used by the save/short-link
+# backend, and prints its id. Run it once (Actions tab -> Create KV namespace ->
+# Run workflow). Copy the printed id into wrangler.toml.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  kv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create namespace
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "Creating KV namespace 'BUILDS'..."
+          npx --yes wrangler@3 kv namespace create BUILDS \
+            || npx --yes wrangler@3 kv:namespace create BUILDS
+          echo "----"
+          echo "Existing namespaces:"
+          npx --yes wrangler@3 kv namespace list \
+            || npx --yes wrangler@3 kv:namespace list
