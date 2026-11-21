@@ -124,18 +124,25 @@ function resolveKind(declaredType, id) {
 }
 const mat = (s) => [resolveKind(s.item_type, s.item_id), s.item_id, s.quantity];
 
+// Exact item-tag -> profession overrides, checked before the keyword rules.
+// Use these for domain corrections where a tag is authoritative.
+const TAG_PROFESSION = {
+  Straw: "Farming", // straw is a farming byproduct, not a foraged plant
+};
+
 // Keyword -> gathering profession, for raw materials that no recipe produces.
 // Best-effort; anything unmatched falls into the "Raw / Gathered" bucket in the UI.
 const GATHER_RULES = [
   [/log|wood|timber|stick|bark|sap|branch|plank|lumber/i, "Forestry"],
   [/ore|stone|rock|boulder|clay|salt|coal|flint|gem|crystal|sand|ingot|metal/i, "Mining"],
-  [/fiber|plant|flower|blossom|herb|berry|mushroom|moss|root|leaf|reed|cotton|straw|nut|seed/i, "Foraging"],
+  [/fiber|plant|flower|blossom|herb|berry|mushroom|moss|root|leaf|reed|cotton|nut|seed/i, "Foraging"],
   [/hide|pelt|leather|meat|bone|carcass|fur|animal|feather/i, "Hunting"],
   [/fish|shell|clam|crab|seaweed|pearl|bait/i, "Fishing"],
-  [/crop|grain|wheat|vegetable|fruit|wool|milk|egg/i, "Farming"],
+  [/crop|grain|wheat|vegetable|fruit|wool|milk|egg|straw/i, "Farming"],
   [/hexite|shard|ancient/i, "Hexite Gathering"],
 ];
 function gatherProfession(name, tag) {
+  if (tag && TAG_PROFESSION[tag]) return TAG_PROFESSION[tag];
   const hay = `${tag} ${name}`;
   for (const [re, prof] of GATHER_RULES) if (re.test(hay)) return prof;
   return "";
