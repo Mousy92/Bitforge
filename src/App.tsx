@@ -16,6 +16,7 @@ import { Picker } from "./components/Picker";
 import { PlanView } from "./components/PlanView";
 import { TargetList } from "./components/TargetList";
 import { CookingTab } from "./components/CookingTab";
+import { UpgradeTab } from "./components/UpgradeTab";
 
 type Tab = "planner" | "cooking" | "upgrade";
 
@@ -240,7 +241,7 @@ export default function App() {
       ) : tab === "cooking" ? (
         <CookingTab data={data} />
       ) : (
-        <UpgradePlannerPlaceholder />
+        <UpgradeTab data={data} storage={useStorage ? storage : null} onRefresh={refreshStorage} />
       )}
 
       <Footer data={data} />
@@ -275,7 +276,6 @@ function Header({
         </button>
         <button className={tab === "upgrade" ? "tab active" : "tab"} onClick={() => setTab("upgrade")}>
           Upgrade Planner
-          <span className="soon">soon</span>
         </button>
       </nav>
       {data && <span className="data-ver">data {data.sourceCommit}</span>}
@@ -492,26 +492,6 @@ function EmptyState() {
         <li>Hit <b>Copy share link</b> to send the whole plan to a friend.</li>
       </ul>
     </div>
-  );
-}
-
-function UpgradePlannerPlaceholder() {
-  return (
-    <main className="layout single">
-      <div className="panel empty">
-        <h2>Upgrade Planner — coming next</h2>
-        <p>
-          Pick a target tier/level, drop in the stations you want, and BitForge
-          will front-load the <b>research books</b> you need first, then roll up
-          all the station build materials — divided by profession, same as the
-          Build Planner.
-        </p>
-        <p className="hint">
-          The research/knowledge data is already in the dataset; this tab wires it
-          into a tier-by-tier checklist.
-        </p>
-      </div>
-    </main>
   );
 }
 
