@@ -147,3 +147,17 @@ export function resolveTarget(line: GearLine, tier: number): GearItem | null {
 export function craftableTiers(line: GearLine): number[] {
   return [...new Set(line.items.filter((i) => i.craftable).map((i) => i.tier))].sort((a, b) => a - b);
 }
+
+/**
+ * The craftable items for every tier step from `cur` (exclusive) up to `tgt`
+ * (inclusive) — i.e. each tool you'd actually craft climbing the line one tier
+ * at a time. Skips tiers with no craftable item.
+ */
+export function stepsBetween(line: GearLine, cur: number, tgt: number): GearItem[] {
+  const out: GearItem[] = [];
+  for (let t = cur + 1; t <= tgt; t++) {
+    const item = line.items.find((i) => i.tier === t && i.craftable);
+    if (item) out.push(item);
+  }
+  return out;
+}

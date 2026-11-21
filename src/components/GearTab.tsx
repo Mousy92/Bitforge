@@ -11,6 +11,7 @@ import {
   craftableTiers,
   lineForItem,
   resolveTarget,
+  stepsBetween,
 } from "../gear";
 import { pullEquipment } from "../backend";
 import { PlanView } from "./PlanView";
@@ -23,6 +24,7 @@ interface Tracked {
 
 const PLAYER_LS = "bitforge:player";
 const GEAR_LS = "bitforge:gear";
+const STEP_LS = "bitforge:gearstep";
 
 export function GearTab({
   data,
@@ -52,6 +54,21 @@ export function GearTab({
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [addQ, setAddQ] = useState("");
+  const [stepEach, setStepEachState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(STEP_LS) === "1";
+    } catch {
+      return false;
+    }
+  });
+  function setStepEach(b: boolean) {
+    setStepEachState(b);
+    try {
+      localStorage.setItem(STEP_LS, b ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
   const [chosen, setChosen] = useState<Record<ItemKey, number>>({});
   const [overrides, setOverrides] = useState<Record<ItemKey, number>>({});
 
@@ -65,21 +82,27 @@ export function GearTab({
   }
 
   // Build a plan from every piece whose target tier beats its current tier.
+  // In "step through every tier" mode, we craft each tool on the way up (the
+  // realistic grind); otherwise just the final target item.
   const build = useMemo(() => {
-    const targets: Target[] = [];
+    const qty = new Map<ItemKey, number>();
     for (const t of tracked) {
       const line = index.lines.get(t.lineKey);
       if (!line || t.tgt <= t.cur) continue;
-      const item = resolveTarget(line, t.tgt);
-      if (item) targets.push({ t: "i", k: item.key, q: 1 });
+      const items = stepEach ? stepsBetween(line, t.cur, t.tgt) : [resolveTarget(line, t.tgt)].filter(Boolean);
+      for (const item of items) if (item) qty.set(item.key, (qty.get(item.key) || 0) + 1);
     }
+    const targets: Target[] = [...qty.entries()].map(([k, q]) => ({ t: "i", k, q }));
     return { name: "Gear upgrades", targets };
-  }, [tracked, index]);
+  }, [tracked, index, stepEach]);
 
   const plan = useMemo(() => planBuild(data, build, chosen), [data, build, chosen]);
   const buildSig = useMemo(
-    () => "gear:" + tracked.map((t) => `${t.lineKey}>${t.tgt}`).sort().join("|"),
-    [tracked]
+    () =>
+      "gear:" +
+      (stepEach ? "step:" : "") +
+      tracked.map((t) => `${t.lineKey}:${t.cur}>${t.tgt}`).sort().join("|"),
+    [tracked, stepEach]
   );
 
   useEffect(() => {
@@ -250,6 +273,9 @@ export function GearTab({
           index={index}
           tracked={tracked}
           cats={cats}
+          chosen={chosen}
+          stepEach={stepEach}
+          onStepEach={setStepEach}
           onCur={(lk, v) => setField(lk, "cur", v)}
           onTgt={(lk, v) => setField(lk, "tgt", v)}
           onRemove={remove}
@@ -294,6 +320,9 @@ function TrackedList({
   index,
   tracked,
   cats,
+  chosen,
+  stepEach,
+  onStepEach,
   onCur,
   onTgt,
   onRemove,
@@ -302,6 +331,9 @@ function TrackedList({
   index: GearIndex;
   tracked: Tracked[];
   cats: ReturnType<typeof categoriesInOrder>;
+  chosen: Record<ItemKey, number>;
+  stepEach: boolean;
+  onStepEach: (b: boolean) => void;
   onCur: (lineKey: string, v: number) => void;
   onTgt: (lineKey: string, v: number) => void;
   onRemove: (lineKey: string) => void;
@@ -323,65 +355,134 @@ function TrackedList({
         <div className="spacer" />
         <span className="muted small">{tracked.length} pieces</span>
       </div>
+      <label className="gear-step-toggle" title="Count crafting every tier on the way up, not just the final one">
+        <input type="checkbox" checked={stepEach} onChange={(e) => onStepEach(e.target.checked)} />
+        Step through every tier (realistic grind)
+      </label>
       {cats
         .filter((c) => byCat.has(c.id))
         .map((c) => (
           <div key={c.id} className="gear-cat">
             <div className="gear-cat-head">{c.label}</div>
             <ul className="gear-list">
-              {byCat.get(c.id)!.map((t) => {
-                const line = index.lines.get(t.lineKey)!;
-                const tiers = [...new Set(line.items.map((i) => i.tier))].sort((a, b) => a - b);
-                const ctiers = craftableTiers(line);
-                const targetItem = resolveTarget(line, t.tgt);
-                const upgrading = t.tgt > t.cur;
-                return (
-                  <li key={t.lineKey} className={upgrading ? "gear-row" : "gear-row flat"}>
-                    <div className="gear-row-main">
-                      <span className="gear-name">
-                        {line.suffix}
-                        <span className="gear-rarity">{line.rarity}</span>
-                      </span>
-                      <button className="gear-x" onClick={() => onRemove(t.lineKey)} title="Stop tracking">
-                        ×
-                      </button>
-                    </div>
-                    <div className="gear-row-tiers">
-                      <label className="gear-tier">
-                        <span>Have</span>
-                        <select value={t.cur} onChange={(e) => onCur(t.lineKey, Number(e.target.value))}>
-                          {tiers.map((tt) => (
-                            <option key={tt} value={tt}>
-                              T{tt}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <span className="gear-arrow">→</span>
-                      <label className="gear-tier">
-                        <span>Target</span>
-                        <select value={t.tgt} onChange={(e) => onTgt(t.lineKey, Number(e.target.value))}>
-                          {ctiers.map((tt) => (
-                            <option key={tt} value={tt}>
-                              T{tt}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {upgrading && targetItem ? (
-                        <span className="gear-target-name" title="Craft target">
-                          {itemName(data, targetItem.key)}
-                        </span>
-                      ) : (
-                        <span className="gear-maxed">at target</span>
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
+              {byCat.get(c.id)!.map((t) => (
+                <GearRow
+                  key={t.lineKey}
+                  data={data}
+                  line={index.lines.get(t.lineKey)!}
+                  t={t}
+                  chosen={chosen}
+                  onCur={onCur}
+                  onTgt={onTgt}
+                  onRemove={onRemove}
+                />
+              ))}
             </ul>
           </div>
         ))}
     </div>
+  );
+}
+
+function GearRow({
+  data,
+  line,
+  t,
+  chosen,
+  onCur,
+  onTgt,
+  onRemove,
+}: {
+  data: GameData;
+  line: GearLine;
+  t: Tracked;
+  chosen: Record<ItemKey, number>;
+  onCur: (lineKey: string, v: number) => void;
+  onTgt: (lineKey: string, v: number) => void;
+  onRemove: (lineKey: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const tiers = [...new Set(line.items.map((i) => i.tier))].sort((a, b) => a - b);
+  const ctiers = craftableTiers(line);
+  const targetItem = resolveTarget(line, t.tgt);
+  const upgrading = t.tgt > t.cur;
+  const steps = upgrading ? stepsBetween(line, t.cur, t.tgt) : [];
+
+  // Per-tier cost, computed only when the breakdown is open.
+  const stepCosts = useMemo(() => {
+    if (!open) return [];
+    return steps.map((item) => {
+      const plan = planBuild(data, { name: "", targets: [{ t: "i", k: item.key, q: 1 }] }, chosen);
+      const units = plan.lines.reduce((s, l) => s + l.qty, 0);
+      return { item, mats: plan.lines.length, raw: plan.raw.length, units };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, t.cur, t.tgt, line.lineKey, data, chosen]);
+
+  return (
+    <li className={upgrading ? "gear-row" : "gear-row flat"}>
+      <div className="gear-row-main">
+        {upgrading && steps.length > 0 ? (
+          <button className="gear-expand" onClick={() => setOpen((o) => !o)} title="Per-tier cost breakdown">
+            <span className="gear-chev">{open ? "▾" : "▸"}</span>
+            <span className="gear-name">
+              {line.suffix}
+              <span className="gear-rarity">{line.rarity}</span>
+            </span>
+          </button>
+        ) : (
+          <span className="gear-name">
+            {line.suffix}
+            <span className="gear-rarity">{line.rarity}</span>
+          </span>
+        )}
+        <button className="gear-x" onClick={() => onRemove(t.lineKey)} title="Stop tracking">
+          ×
+        </button>
+      </div>
+      <div className="gear-row-tiers">
+        <label className="gear-tier">
+          <span>Have</span>
+          <select value={t.cur} onChange={(e) => onCur(t.lineKey, Number(e.target.value))}>
+            {tiers.map((tt) => (
+              <option key={tt} value={tt}>
+                T{tt}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="gear-arrow">→</span>
+        <label className="gear-tier">
+          <span>Target</span>
+          <select value={t.tgt} onChange={(e) => onTgt(t.lineKey, Number(e.target.value))}>
+            {ctiers.map((tt) => (
+              <option key={tt} value={tt}>
+                T{tt}
+              </option>
+            ))}
+          </select>
+        </label>
+        {upgrading && targetItem ? (
+          <span className="gear-target-name" title="Craft target">
+            {itemName(data, targetItem.key)}
+          </span>
+        ) : (
+          <span className="gear-maxed">at target</span>
+        )}
+      </div>
+      {open && stepCosts.length > 0 && (
+        <ol className="gear-steps">
+          {stepCosts.map(({ item, mats, units }) => (
+            <li key={item.key}>
+              <span className="gear-step-tier">T{item.tier}</span>
+              <span className="gear-step-name">{itemName(data, item.key)}</span>
+              <span className="gear-step-cost">
+                {mats.toLocaleString()} mats · {units.toLocaleString()} units
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </li>
   );
 }
