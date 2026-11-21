@@ -121,6 +121,49 @@ a:hover { text-decoration: underline; }
 .r-add { font-size: 12px; color: var(--amber); opacity: 0; }
 .results li:hover .r-add { opacity: 1; }
 
+.filter-btn { white-space: nowrap; }
+
+/* filters */
+.filters {
+  margin-top: 10px; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px;
+}
+.filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.filter-grid label, .tag-filter {
+  display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--muted);
+}
+.filter-grid .tag-filter { grid-column: 1 / -1; }
+.filters select, .filters input {
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  border-radius: 7px; padding: 7px 8px; font-size: 13px;
+}
+.filters select:focus, .filters input:focus { outline: none; border-color: var(--amber); }
+.tier-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-top: 11px; }
+.tier-row > span { font-size: 11.5px; color: var(--muted); margin-right: 3px; }
+.tchip {
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  width: 28px; height: 26px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.tchip:hover { color: var(--text); border-color: #3a435f; }
+.tchip.on { background: var(--amber); color: #1a1206; border-color: transparent; font-weight: 600; }
+.clear-filters { margin-left: auto; }
+
+/* browse list */
+.browse { margin-top: 10px; }
+.browse-head { font-size: 12px; color: var(--muted); margin: 4px 2px 6px; }
+.browse-list {
+  list-style: none; margin: 0; padding: 4px; max-height: 420px; overflow: auto;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 10px;
+}
+.browse-list li { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 7px; }
+.browse-list li:hover { background: #2c3650; }
+.b-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.b-tier { font: 10.5px var(--mono); color: var(--blue); background: #1b2a3d; padding: 1px 5px; border-radius: 5px; }
+.b-prof { font-size: 11px; color: var(--muted); max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b-add { background: #273049; border: 1px solid var(--line); color: var(--amber); border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
+.b-add:hover { background: var(--amber); color: #1a1206; border-color: transparent; }
+.b-empty { color: var(--muted); font-size: 13px; justify-content: center; }
+
 .pill {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.4px;
   padding: 2px 7px; border-radius: 6px; font-weight: 600;

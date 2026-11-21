@@ -52,6 +52,13 @@ let DATA: GameData | null = null;
 
 export async function loadGameData(): Promise<GameData> {
   if (DATA) return DATA;
+  // Single-file / offline build: the generator output is bundled and attached to
+  // the window by main.local.tsx, so there's nothing to fetch.
+  const bundled = (globalThis as unknown as { __GAMEDATA__?: GameData }).__GAMEDATA__;
+  if (bundled) {
+    DATA = bundled;
+    return DATA;
+  }
   const res = await fetch(`${import.meta.env.BASE_URL}data/gamedata.json`);
   if (!res.ok) throw new Error(`Failed to load game data (${res.status})`);
   DATA = (await res.json()) as GameData;
