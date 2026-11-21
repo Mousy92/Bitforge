@@ -13,12 +13,14 @@ export function PlanView({
   chosen,
   onChoose,
   buildSig,
+  storage,
 }: {
   data: GameData;
   plan: Plan;
   chosen: Record<ItemKey, number>;
   onChoose: (key: ItemKey, idx: number) => void;
   buildSig: string;
+  storage?: Record<ItemKey, number> | null;
 }) {
   const [view, setView] = useState<View>("profession");
   const [progress, setProgress] = useState<Progress>({});
@@ -114,6 +116,7 @@ export function PlanView({
             onHave={setHave}
             chosen={chosen}
             onChoose={onChoose}
+            storage={storage}
           />
         ))}
 
@@ -127,6 +130,7 @@ export function PlanView({
           chosen={chosen}
           onChoose={onChoose}
           flatProf
+          storage={storage}
         />
       )}
 
@@ -140,6 +144,7 @@ export function PlanView({
           chosen={chosen}
           onChoose={onChoose}
           flatProf
+          storage={storage}
         />
       )}
     </div>
@@ -164,6 +169,7 @@ function ProfessionBlock({
   chosen,
   onChoose,
   flatProf,
+  storage,
 }: {
   data: GameData;
   title: string;
@@ -173,9 +179,12 @@ function ProfessionBlock({
   chosen: Record<ItemKey, number>;
   onChoose: (key: ItemKey, idx: number) => void;
   flatProf?: boolean;
+  storage?: Record<ItemKey, number> | null;
 }) {
   const [open, setOpen] = useState(true);
-  const done = lines.filter((l) => (progress[l.key] || 0) >= l.qty).length;
+  const stored = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
+  const effHave = (l: PlanLine) => (progress[l.key] || 0) + stored(l.key);
+  const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
 
   return (
@@ -195,7 +204,10 @@ function ProfessionBlock({
         <ul className="matlist">
           {lines.map((l) => {
             const have = progress[l.key] || 0;
-            const complete = have >= l.qty;
+            const inStore = stored(l.key);
+            const eff = have + inStore;
+            const complete = eff >= l.qty;
+            const remaining = Math.max(0, l.qty - eff);
             const recs = recipesFor(data, l.key);
             return (
               <li key={l.key} className={complete ? "mat done" : "mat"}>
@@ -205,7 +217,9 @@ function ProfessionBlock({
                   onChange={(e) => onHave(l.key, e.target.checked ? l.qty : 0)}
                   title="Mark complete"
                 />
-                <span className="m-qty">{l.qty.toLocaleString()}</span>
+                <span className="m-qty" title={inStore ? `${remaining.toLocaleString()} still needed` : undefined}>
+                  {inStore && !complete ? remaining.toLocaleString() : l.qty.toLocaleString()}
+                </span>
                 <span className="m-name">
                   {l.name}
                   {l.tier > 0 && <span className="m-tier">T{l.tier}</span>}
@@ -231,6 +245,11 @@ function ProfessionBlock({
                   )}
                 </span>
                 <span className="m-have">
+                  {inStore > 0 && (
+                    <span className="m-store" title="In your pulled storage">
+                      📦 {inStore.toLocaleString()}
+                    </span>
+                  )}
                   <input
                     type="number"
                     min={0}

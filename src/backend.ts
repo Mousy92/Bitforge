@@ -3,6 +3,7 @@
 // single-file offline build, or before KV is configured), callers fall back to
 // the self-contained #b= link.
 
+import { type GameData, type ItemKey, canonKey } from "./data";
 import type { Build } from "./model";
 import { decodeBuild, encodeBuild } from "./share";
 
@@ -29,6 +30,35 @@ export async function loadBuildRemote(id: string): Promise<Build | null> {
     if (!res.ok) return null;
     const data = (await res.json()) as { code?: string };
     return data.code ? decodeBuild(data.code) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface InventoryResult {
+  totals: Record<ItemKey, number>; // keyed by canonical plan keys
+  distinct: number;
+  source: string;
+}
+
+/** Pull a claim's on-hand storage from Bitjita (via our proxy) and map it to
+ *  canonical plan keys. Returns null on failure. */
+export async function pullInventory(
+  data: GameData,
+  claim: string
+): Promise<InventoryResult | null> {
+  try {
+    const res = await fetch(
+      `${import.meta.env.BASE_URL}api/inventory?claim=${encodeURIComponent(claim)}`
+    );
+    if (!res.ok) return null;
+    const d = (await res.json()) as { totals?: Record<string, number>; source?: string };
+    const totals: Record<ItemKey, number> = {};
+    for (const [k, q] of Object.entries(d.totals || {})) {
+      const ck = canonKey(data, k);
+      totals[ck] = (totals[ck] || 0) + (q || 0);
+    }
+    return { totals, distinct: Object.keys(totals).length, source: d.source || "" };
   } catch {
     return null;
   }

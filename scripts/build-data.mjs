@@ -398,6 +398,9 @@ const out = {
   items,
   buildings,
   recipes,
+  // base/inventory id -> canonical craftable key, so a pulled inventory (which
+  // reports base ids) can be matched to the keys the planner uses.
+  aliasMap,
 };
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });

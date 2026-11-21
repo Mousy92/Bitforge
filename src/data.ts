@@ -42,6 +42,8 @@ export interface GameData {
   items: Record<string, ItemRaw>;
   buildings: BuildingRaw[];
   recipes: Record<string, RecipeRaw[]>;
+  /** base/inventory id -> canonical craftable key (for matching pulled storage) */
+  aliasMap?: Record<string, string>;
 }
 
 /** A key like "i1010001" or "c150000" identifying an item/cargo across namespaces. */
@@ -79,6 +81,18 @@ export function resolveKey(data: GameData, key: ItemKey): ItemKey {
 
 export function itemName(data: GameData, key: ItemKey): string {
   return data.items[resolveKey(data, key)]?.n ?? key;
+}
+
+/**
+ * Canonical key the planner uses for an item, resolving both the item/cargo
+ * namespace and base/craftable twins. Used to match a pulled inventory (which
+ * reports base inventory ids) to the keys that appear in a plan.
+ */
+export function canonKey(data: GameData, key: ItemKey): ItemKey {
+  if (data.aliasMap && data.aliasMap[key]) return data.aliasMap[key];
+  const r = resolveKey(data, key);
+  if (data.aliasMap && data.aliasMap[r]) return data.aliasMap[r];
+  return r;
 }
 
 export function skillName(data: GameData, id: number): string {

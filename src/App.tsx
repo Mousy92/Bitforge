@@ -11,7 +11,7 @@ import {
   shortShareUrl,
   syncHash,
 } from "./share";
-import { loadBuildRemote, saveBuildRemote } from "./backend";
+import { loadBuildRemote, pullInventory, saveBuildRemote } from "./backend";
 import { Picker } from "./components/Picker";
 import { PlanView } from "./components/PlanView";
 import { TargetList } from "./components/TargetList";
@@ -25,6 +25,9 @@ export default function App() {
   const [build, setBuild] = useState<Build>(() => buildFromHash() || emptyBuild());
   // chosen recipe index per item key (when multiple recipes exist)
   const [chosen, setChosen] = useState<Record<ItemKey, number>>({});
+  // pulled claim storage (canonical keys -> qty), and whether to subtract it
+  const [storage, setStorage] = useState<Record<ItemKey, number> | null>(null);
+  const [useStorage, setUseStorage] = useState(true);
 
   useEffect(() => {
     loadGameData().then(setData).catch((e) => setErr(String(e)));
@@ -134,6 +137,14 @@ export default function App() {
               )}
               <ImportExport build={build} onImport={setBuild} />
             </div>
+
+            <StoragePanel
+              data={data}
+              storage={storage}
+              setStorage={setStorage}
+              useStorage={useStorage}
+              setUseStorage={setUseStorage}
+            />
           </section>
 
           <section className="col-right">
@@ -146,6 +157,7 @@ export default function App() {
                 chosen={chosen}
                 onChoose={(key, idx) => setChosen((c) => ({ ...c, [key]: idx }))}
                 buildSig={buildSig}
+                storage={useStorage ? storage : null}
               />
             )}
           </section>
@@ -272,6 +284,105 @@ function ImportExport({ build, onImport }: { build: Build; onImport: (b: Build) 
             <span className="hint">Paste a code here, or copy the one shown to share.</span>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+const CLAIM_LS = "bitforge:claim";
+
+function StoragePanel({
+  data,
+  storage,
+  setStorage,
+  useStorage,
+  setUseStorage,
+}: {
+  data: GameData;
+  storage: Record<ItemKey, number> | null;
+  setStorage: (s: Record<ItemKey, number> | null) => void;
+  useStorage: boolean;
+  setUseStorage: (b: boolean) => void;
+}) {
+  const [claim, setClaim] = useState<string>(() => {
+    try {
+      return localStorage.getItem(CLAIM_LS) || "";
+    } catch {
+      return "";
+    }
+  });
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function pull() {
+    const id = claim.trim();
+    if (!/^\d{5,25}$/.test(id)) {
+      setMsg("Enter your numeric claim ID.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      localStorage.setItem(CLAIM_LS, id);
+    } catch {
+      /* ignore */
+    }
+    const res = await pullInventory(data, id);
+    setBusy(false);
+    if (!res) {
+      setMsg("Couldn't reach storage for that claim. Check the ID.");
+      return;
+    }
+    setStorage(res.totals);
+    setUseStorage(true);
+    setMsg(`Pulled ${res.distinct.toLocaleString()} item types from storage.`);
+  }
+
+  return (
+    <div className="panel storage">
+      <div className="panel-head">
+        <h2>My storage</h2>
+        {storage && (
+          <label className="store-toggle">
+            <input
+              type="checkbox"
+              checked={useStorage}
+              onChange={(e) => setUseStorage(e.target.checked)}
+            />
+            subtract from needs
+          </label>
+        )}
+      </div>
+      <p className="hint">
+        Pull your settlement's on-hand items from{" "}
+        <a href="https://bitjita.com" target="_blank" rel="noreferrer">
+          Bitjita
+        </a>{" "}
+        so the plan shows only what you still need.
+      </p>
+      <div className="store-row">
+        <input
+          className="search"
+          placeholder="Claim ID (number from your bitjita.com/claims/… URL)"
+          value={claim}
+          onChange={(e) => setClaim(e.target.value)}
+          inputMode="numeric"
+        />
+        <button className="btn primary small" disabled={busy} onClick={pull}>
+          {busy ? "Pulling…" : storage ? "Refresh" : "Pull"}
+        </button>
+      </div>
+      {msg && <div className="store-msg">{msg}</div>}
+      {storage && (
+        <button
+          className="btn ghost small"
+          onClick={() => {
+            setStorage(null);
+            setMsg(null);
+          }}
+        >
+          Clear storage
+        </button>
       )}
     </div>
   );
