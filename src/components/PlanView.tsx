@@ -57,6 +57,17 @@ export function PlanView({
   const rawCount = plan.raw.length;
   const professions = plan.byProfession.length;
 
+  // Overall progress across the whole build. Uses the same per-line "have"
+  // logic as the sections: a hardset override wins, else tracked + pulled storage.
+  const storedAt = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
+  const effHaveTop = (l: PlanLine) =>
+    overrides[l.key] !== undefined ? overrides[l.key] : (progress[l.key] || 0) + storedAt(l.key);
+  const doneLines = plan.lines.filter((l) => effHaveTop(l) >= l.qty).length;
+  const itemPct = plan.lines.length ? Math.round((doneLines / plan.lines.length) * 100) : 0;
+  const totalUnits = plan.lines.reduce((s, l) => s + l.qty, 0);
+  const haveUnits = plan.lines.reduce((s, l) => s + Math.min(effHaveTop(l), l.qty), 0);
+  const unitPct = totalUnits ? Math.round((haveUnits / totalUnits) * 100) : 0;
+
   function copyText() {
     const txt = planToText(data, plan);
     navigator.clipboard?.writeText(txt).catch(() => prompt("Copy plan:", txt));
@@ -70,6 +81,23 @@ export function PlanView({
         <button className="btn ghost small" onClick={copyText}>
           Copy as text
         </button>
+      </div>
+
+      <div className="overall">
+        <div className="overall-top">
+          <span className="overall-pct">{itemPct}%</span>
+          <span className="overall-label">
+            <b>{doneLines.toLocaleString()}</b> of <b>{plan.lines.length.toLocaleString()}</b> materials complete
+          </span>
+          <span className="spacer" />
+          <span className="overall-units" title="Share of total material units you have (counts partials)">
+            {unitPct}% of units ({haveUnits.toLocaleString()}/{totalUnits.toLocaleString()})
+          </span>
+        </div>
+        <span className="overall-bar">
+          <span className="overall-bar-fill" style={{ width: `${itemPct}%` }} />
+          <span className="overall-bar-units" style={{ width: `${unitPct}%` }} />
+        </span>
       </div>
 
       <div className="stats">

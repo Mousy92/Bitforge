@@ -84,7 +84,10 @@ export async function loadGameData(): Promise<GameData> {
     DATA = bundled;
     return DATA;
   }
-  const res = await fetch(`${import.meta.env.BASE_URL}data/gamedata.json`);
+  // `?v=<content-hash>` busts the day-long CDN/browser cache on the stable
+  // gamedata.json filename whenever the data content changes (see vite.config.ts).
+  const v = typeof __DATA_VERSION__ === "string" ? __DATA_VERSION__ : "";
+  const res = await fetch(`${import.meta.env.BASE_URL}data/gamedata.json${v ? `?v=${v}` : ""}`);
   if (!res.ok) throw new Error(`Failed to load game data (${res.status})`);
   DATA = (await res.json()) as GameData;
   return DATA;
