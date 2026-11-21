@@ -34,9 +34,32 @@ export interface BuildingRaw {
   recipe: { sk: number; lv: number; act: number; mats: MatRef[] };
 }
 
+export interface FoodBuff {
+  d: string; // description
+  ben: boolean; // beneficial
+  dur: number; // duration seconds
+  stats: [string, number, boolean][]; // [label, value, isPct]
+}
+
+export interface FoodRaw {
+  id: number;
+  n: string;
+  t: number; // tier
+  tag: string;
+  r: string; // rarity
+  ic: string;
+  hp: number;
+  st: number; // stamina
+  hg: number; // hunger
+  tp: number; // teleportation energy
+  combat: boolean;
+  buffs: FoodBuff[];
+}
+
 export interface GameData {
   generatedAt: string;
   sourceCommit: string;
+  foods?: FoodRaw[];
   skills: Record<string, string>;
   buildingTypes: Record<string, string>;
   items: Record<string, ItemRaw>;

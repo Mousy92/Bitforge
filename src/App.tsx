@@ -15,8 +15,9 @@ import { loadBuildRemote, pullInventory, saveBuildRemote } from "./backend";
 import { Picker } from "./components/Picker";
 import { PlanView } from "./components/PlanView";
 import { TargetList } from "./components/TargetList";
+import { CookingTab } from "./components/CookingTab";
 
-type Tab = "planner" | "upgrade";
+type Tab = "planner" | "cooking" | "upgrade";
 
 export default function App() {
   const [data, setData] = useState<GameData | null>(null);
@@ -236,6 +237,8 @@ export default function App() {
             )}
           </section>
         </main>
+      ) : tab === "cooking" ? (
+        <CookingTab data={data} />
       ) : (
         <UpgradePlannerPlaceholder />
       )}
@@ -266,6 +269,9 @@ function Header({
       <nav className="tabs">
         <button className={tab === "planner" ? "tab active" : "tab"} onClick={() => setTab("planner")}>
           Build Planner
+        </button>
+        <button className={tab === "cooking" ? "tab active" : "tab"} onClick={() => setTab("cooking")}>
+          Cooking
         </button>
         <button className={tab === "upgrade" ? "tab active" : "tab"} onClick={() => setTab("upgrade")}>
           Upgrade Planner

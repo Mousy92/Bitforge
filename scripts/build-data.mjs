@@ -66,6 +66,8 @@ const constructionRecipes = load("construction_recipe_desc");
 const craftingRecipes = load("crafting_recipe_desc");
 const buildingTypes = load("building_type_desc");
 const itemListDesc = load("item_list_desc");
+const foodDesc = load("food_desc");
+const buffDesc = load("buff_desc");
 
 // ---- resolve "output token" recipe products ---------------------------------
 // Many production recipes (smelting, refining, cooking) don't output the real
@@ -400,9 +402,59 @@ for (const b of buildingDesc) {
   });
 }
 
+// ---- foods: stats + buffs, for the Cooking reference tab -------------------
+const buffById = new Map(buffDesc.map((b) => [b.id, b]));
+const STAT_LABELS = {
+  PassiveHealthRegenRate: "Health regen",
+  PassiveStaminaRegenRate: "Stamina regen",
+  CraftingSpeed: "Crafting speed",
+  GatheringSpeed: "Gathering speed",
+  CooldownMultiplier: "Cooldown",
+  MovementSpeed: "Movement speed",
+  MaxHealth: "Max health",
+  MaxStamina: "Max stamina",
+  DamageMultiplier: "Damage",
+  ExperienceMultiplier: "Experience",
+};
+const statLabel = (id) => STAT_LABELS[id] || String(id).replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+
+const foods = [];
+for (const f of foodDesc) {
+  const it = itemDescById.get(f.item_id);
+  const n = cleanName(it?.name);
+  if (!n || (it.tag || "").toUpperCase().includes("DEVELOPER")) continue;
+  const buffs = [];
+  for (const bd of f.buffs || []) {
+    const b = buffById.get(bd.buff_id);
+    if (!b) continue;
+    buffs.push({
+      d: cleanName(b.description) || `Buff ${bd.buff_id}`,
+      ben: b.beneficial !== false,
+      dur: bd.duration || b.duration || 0,
+      stats: (b.stats || []).map((s) => [statLabel(s.id), s.value, !!s.is_pct]),
+    });
+  }
+  foods.push({
+    id: f.item_id,
+    n,
+    t: it.tier,
+    tag: it.tag || "",
+    r: it.rarity || "",
+    ic: it.icon_asset_name || "",
+    hp: Math.round(f.hp || 0),
+    st: Math.round(f.stamina || 0),
+    hg: Math.round(f.hunger || 0),
+    tp: Math.round(f.teleportation_energy || 0),
+    combat: !!f.consumable_while_in_combat,
+    buffs,
+  });
+}
+foods.sort((a, b) => a.t - b.t || a.n.localeCompare(b.n));
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),
+  foods,
   skills,
   buildingTypes: buildingTypeName,
   items,

@@ -295,6 +295,28 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .m-have input:focus { outline: none; border-color: var(--amber); }
 .m-have-sep { color: var(--muted); font: 12px var(--mono); min-width: 44px; }
 
+/* food table */
+.food-table-wrap { overflow-x: auto; margin-top: 12px; }
+.food-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.food-table th {
+  text-align: left; color: var(--muted); font-weight: 600; font-size: 12px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+  background: var(--panel);
+}
+.food-table th.s { cursor: pointer; user-select: none; white-space: nowrap; }
+.food-table th.s:hover { color: var(--text); }
+.food-table th.num, .food-table td.num { text-align: right; font-family: var(--mono); }
+.food-table td { padding: 9px 10px; border-bottom: 1px solid #222838; vertical-align: top; }
+.food-table tbody tr:hover { background: var(--panel2); }
+.food-name { font-weight: 500; }
+.food-tag { margin-left: 8px; font-size: 11px; color: var(--muted); background: #222a3c; padding: 1px 6px; border-radius: 5px; }
+.food-nocombat { margin-left: 6px; font-size: 10.5px; color: #c98b6b; }
+.buff { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 3px; }
+.buff-name { color: #cfe3ff; }
+.buff.bad .buff-name { color: #e2a0a0; }
+.buff-dur { font: 11px var(--mono); color: var(--muted); }
+.buff-stat { font: 11.5px var(--mono); color: #8fe0ad; background: #16271d; padding: 1px 6px; border-radius: 5px; }
+
 /* footer */
 .footer {
   margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line);
