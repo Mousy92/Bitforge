@@ -26,11 +26,6 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Show accessible account (debug)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npx --yes wrangler@3 whoami || true
-
       - name: Create project if missing, then deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -39,3 +34,23 @@ jobs:
           npx --yes wrangler@3 pages project create bitforge --production-branch=main \
             || echo "project create skipped (likely already exists) — continuing"
           npx --yes wrangler@3 pages deploy dist --project-name=bitforge --branch=main
+
+      - name: Attach custom domain bitforge.mousyhub.com (idempotent)
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "Attaching custom domain to the Pages project..."
+          curl -s -X POST \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/pages/projects/bitforge/domains" \
+            --data '{"name":"bitforge.mousyhub.com"}' \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('domain ok' if d.get('success') else 'domain note: '+json.dumps(d.get('errors')))"
+          echo "Ensuring DNS CNAME exists..."
+          curl -s -X POST \
+            -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/4d1bc3de1ab39d5bb535e8bd2b170865/dns_records" \
+            --data '{"type":"CNAME","name":"bitforge","content":"bitforge-b5w.pages.dev","proxied":true}' \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('dns ok' if d.get('success') else 'dns note: '+json.dumps(d.get('errors')))"
