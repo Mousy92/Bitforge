@@ -21,29 +21,52 @@ export function CookingTab({ data }: { data: GameData }) {
   const foods = data.foods ?? [];
   const [q, setQ] = useState("");
   const [tier, setTier] = useState<number | null>(null);
+  const [buff, setBuff] = useState("");
   const [sort, setSort] = useState<SortKey>("t");
   const [dir, setDir] = useState<1 | -1>(1);
 
   const tiers = useMemo(() => [...new Set(foods.map((f) => f.t))].filter((t) => t > 0).sort((a, b) => a - b), [foods]);
 
+  // Distinct buff stat labels present in the data, for the buff filter dropdown.
+  const buffLabels = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of foods) for (const b of f.buffs) for (const [lbl] of b.stats) set.add(lbl);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [foods]);
+
+  // Best (largest magnitude) value a food grants for the selected buff label.
+  function buffValue(f: FoodRaw, label: string): number {
+    let best = 0;
+    for (const b of f.buffs)
+      for (const [lbl, v] of b.stats)
+        if (lbl === label && Math.abs(v) > Math.abs(best)) best = v;
+    return best;
+  }
+
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
     let r = foods.filter((f) => {
       if (tier !== null && f.t !== tier) return false;
+      if (buff && !f.buffs.some((b) => b.stats.some(([lbl]) => lbl === buff))) return false;
       if (!term) return true;
       if (f.n.toLowerCase().includes(term) || f.tag.toLowerCase().includes(term)) return true;
       return f.buffs.some(
         (b) => b.d.toLowerCase().includes(term) || b.stats.some(([lbl]) => lbl.toLowerCase().includes(term))
       );
     });
-    r = [...r].sort((a, b) => {
-      let cmp: number;
-      if (sort === "n") cmp = a.n.localeCompare(b.n);
-      else cmp = (a[sort] as number) - (b[sort] as number);
-      return (cmp || a.n.localeCompare(b.n)) * dir;
-    });
+    // When a buff is picked, strongest-first by that buff; otherwise the chosen column sort.
+    if (buff) {
+      r = [...r].sort((a, b) => Math.abs(buffValue(b, buff)) - Math.abs(buffValue(a, buff)) || a.n.localeCompare(b.n));
+    } else {
+      r = [...r].sort((a, b) => {
+        let cmp: number;
+        if (sort === "n") cmp = a.n.localeCompare(b.n);
+        else cmp = (a[sort] as number) - (b[sort] as number);
+        return (cmp || a.n.localeCompare(b.n)) * dir;
+      });
+    }
     return r;
-  }, [foods, q, tier, sort, dir]);
+  }, [foods, q, tier, buff, sort, dir]);
 
   function setSortKey(k: SortKey) {
     if (k === sort) setDir((d) => (d === 1 ? -1 : 1));
@@ -98,6 +121,22 @@ export function CookingTab({ data }: { data: GameData }) {
               {t}
             </button>
           ))}
+          <span className="buff-filter">
+            <span>Buff</span>
+            <select className="buff-select" value={buff} onChange={(e) => setBuff(e.target.value)}>
+              <option value="">Any buff</option>
+              {buffLabels.map((lbl) => (
+                <option key={lbl} value={lbl}>
+                  {lbl}
+                </option>
+              ))}
+            </select>
+            {buff && (
+              <button className="tchip clear-buff" onClick={() => setBuff("")} title="Clear buff filter">
+                × {buff}
+              </button>
+            )}
+          </span>
         </div>
 
         <div className="food-table-wrap">
@@ -114,7 +153,7 @@ export function CookingTab({ data }: { data: GameData }) {
             </thead>
             <tbody>
               {rows.map((f) => (
-                <FoodRow key={f.id} f={f} />
+                <FoodRow key={f.id} f={f} active={buff} />
               ))}
             </tbody>
           </table>
@@ -124,7 +163,7 @@ export function CookingTab({ data }: { data: GameData }) {
   );
 }
 
-function FoodRow({ f }: { f: FoodRaw }) {
+function FoodRow({ f, active }: { f: FoodRaw; active?: string }) {
   return (
     <tr>
       <td className="food-name">
@@ -143,7 +182,7 @@ function FoodRow({ f }: { f: FoodRaw }) {
             <span className="buff-name">{b.d}</span>
             {b.dur > 0 && <span className="buff-dur">{fmtDur(b.dur)}</span>}
             {b.stats.map(([lbl, v, pct], j) => (
-              <span key={j} className="buff-stat">
+              <span key={j} className={`buff-stat${active && lbl === active ? " hit" : ""}`}>
                 {lbl} {fmtStat(v, pct)}
               </span>
             ))}
