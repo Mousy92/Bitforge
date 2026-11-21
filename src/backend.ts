@@ -48,13 +48,20 @@ export interface EquipItem {
   rarity: string | null;
   name: string | null;
 }
-export interface EquipmentResult {
+export interface EquipPreset {
+  name: string;
   items: EquipItem[];
+}
+export interface EquipmentResult {
+  presets: EquipPreset[];
+  items: EquipItem[]; // first preset's items (convenience)
   count: number;
 }
 
-/** Pull a player's equipped gear from Bitjita (via our proxy). Returns null on
- *  failure. Item keys are resolved into the gamedata namespace for lookup. */
+type RawEquip = { slot?: string; key?: string; tier?: number | null; rarity?: string | null; name?: string | null };
+
+/** Pull a player's equipped gear (all presets) from Bitjita via our proxy.
+ *  Returns null on failure. Item keys are resolved into the gamedata namespace. */
 export async function pullEquipment(
   data: GameData,
   player: string
@@ -64,19 +71,24 @@ export async function pullEquipment(
       `${import.meta.env.BASE_URL}api/equipment?player=${encodeURIComponent(player)}`
     );
     if (!res.ok) return null;
-    const d = (await res.json()) as {
-      items?: { slot?: string; key?: string; tier?: number | null; rarity?: string | null; name?: string | null }[];
-    };
-    const items: EquipItem[] = (d.items || [])
-      .filter((x) => x && x.key)
-      .map((x) => ({
-        slot: x.slot || "",
-        key: resolveKey(data, x.key as ItemKey),
-        tier: x.tier ?? null,
-        rarity: x.rarity ?? null,
-        name: x.name ?? null,
-      }));
-    return { items, count: items.length };
+    const d = (await res.json()) as { presets?: { name?: string; items?: RawEquip[] }[]; items?: RawEquip[] };
+    const map = (arr?: RawEquip[]): EquipItem[] =>
+      (arr || [])
+        .filter((x) => x && x.key)
+        .map((x) => ({
+          slot: x.slot || "",
+          key: resolveKey(data, x.key as ItemKey),
+          tier: x.tier ?? null,
+          rarity: x.rarity ?? null,
+          name: x.name ?? null,
+        }));
+    let presets: EquipPreset[] = (d.presets || []).map((p, i) => ({
+      name: p.name || `Preset ${i + 1}`,
+      items: map(p.items),
+    }));
+    if (!presets.length && d.items) presets = [{ name: "Equipped", items: map(d.items) }];
+    const count = presets.reduce((s, p) => s + p.items.length, 0);
+    return { presets, items: presets[0]?.items ?? [], count };
   } catch {
     return null;
   }

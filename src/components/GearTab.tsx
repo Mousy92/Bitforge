@@ -28,38 +28,59 @@ interface PieceState {
   cur: { t: number; r: string };
   tgt: { t: number; r: string };
 }
+interface Preset {
+  name: string;
+  gear: Record<string, PieceState>;
+}
 interface Member {
   id: string;
   name: string;
   playerId: string;
-  gear: Record<string, PieceState>;
+  presets: Preset[];
+  activePreset: number;
   skills: PlayerSkill[];
 }
 
-const VILLAGE_LS = "bitforge:village2";
+const VILLAGE_LS = "bitforge:village3";
 const SUB_LS = "bitforge:gearsub";
 const STEP_LS = "bitforge:gearstep";
 
 const uid = () => Math.random().toString(36).slice(2, 9);
+const newMember = (name: string): Member => ({
+  id: uid(),
+  name,
+  playerId: "",
+  presets: [{ name: "Preset 1", gear: {} }],
+  activePreset: 0,
+  skills: [],
+});
 
 function loadVillage(): Member[] {
   try {
     const r = localStorage.getItem(VILLAGE_LS);
     if (r) {
       const v = JSON.parse(r) as Member[];
-      if (Array.isArray(v) && v.length) return v;
+      if (Array.isArray(v) && v.length) {
+        // normalize any partial shapes
+        return v.map((m) => ({
+          ...m,
+          presets: m.presets?.length ? m.presets : [{ name: "Preset 1", gear: {} }],
+          activePreset: Math.min(m.activePreset || 0, (m.presets?.length || 1) - 1),
+          skills: m.skills || [],
+        }));
+      }
     }
   } catch {
     /* ignore */
   }
-  return [{ id: uid(), name: "Me", playerId: "", gear: {}, skills: [] }];
+  return [newMember("Me")];
 }
 
-/** Default target for a piece: top craftable tier at its top rarity. */
 function topTarget(piece: GearPiece): { t: number; r: string } {
   const t = maxCraftableTier(piece);
   return { t, r: topRarityAtTier(piece, t) };
 }
+const activeGear = (m: Member): Record<string, PieceState> => m.presets[m.activePreset]?.gear ?? {};
 
 export function GearTab({
   data,
@@ -80,7 +101,7 @@ export function GearTab({
       return "gear";
     }
   });
-  const [scope, setScope] = useState<string>("all"); // "all" or member id
+  const [scope, setScope] = useState<string>("all");
   const [stepEach, setStepEachState] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STEP_LS) === "1";
@@ -122,24 +143,31 @@ export function GearTab({
   function updateMember(id: string, fn: (m: Member) => Member) {
     persist(village.map((m) => (m.id === id ? fn(m) : m)));
   }
+  // Edit the active preset's gear of a member.
+  function updateGear(id: string, fn: (g: Record<string, PieceState>) => Record<string, PieceState>) {
+    updateMember(id, (m) => {
+      const presets = m.presets.map((p, i) => (i === m.activePreset ? { ...p, gear: fn(p.gear) } : p));
+      return { ...m, presets };
+    });
+  }
   function addMember() {
-    const m: Member = { id: uid(), name: `Person ${village.length + 1}`, playerId: "", gear: {}, skills: [] };
+    const m = newMember(`Person ${village.length + 1}`);
     persist([...village, m]);
     setActiveId(m.id);
   }
   function removeMember(id: string) {
     const next = village.filter((m) => m.id !== id);
-    persist(next.length ? next : loadVillage());
+    persist(next.length ? next : [newMember("Me")]);
     if (activeId === id) setActiveId((next[0] ?? loadVillage()[0]).id);
     if (scope === id) setScope("all");
   }
 
-  // --- the rollup plan ---
+  // Rollup: for each member in scope, use their ACTIVE preset's gear.
   const build = useMemo(() => {
     const qty = new Map<ItemKey, number>();
     const members = scope === "all" ? village : village.filter((m) => m.id === scope);
     for (const m of members) {
-      for (const [pk, st] of Object.entries(m.gear)) {
+      for (const [pk, st] of Object.entries(activeGear(m))) {
         const piece = index.pieces.get(pk);
         if (!piece || !isUpgrade(st.cur.t, st.cur.r, st.tgt.t, st.tgt.r)) continue;
         const items =
@@ -191,12 +219,7 @@ export function GearTab({
   return (
     <main className="layout">
       <section className="col-left">
-        <MemberBar
-          village={village}
-          activeId={active?.id ?? ""}
-          onSelect={setActiveId}
-          onAdd={addMember}
-        />
+        <MemberBar village={village} activeId={active?.id ?? ""} onSelect={setActiveId} onAdd={addMember} />
 
         {active && (
           <MemberPanel
@@ -207,6 +230,27 @@ export function GearTab({
             onUpdate={(fn) => updateMember(active.id, fn)}
             onRemove={() => removeMember(active.id)}
             canRemove={village.length > 1}
+          />
+        )}
+
+        {active && (
+          <PresetTabs
+            member={active}
+            onSelect={(i) => updateMember(active.id, (m) => ({ ...m, activePreset: i }))}
+            onAdd={() =>
+              updateMember(active.id, (m) => ({
+                ...m,
+                presets: [...m.presets, { name: `Preset ${m.presets.length + 1}`, gear: {} }],
+                activePreset: m.presets.length,
+              }))
+            }
+            onRemove={(i) =>
+              updateMember(active.id, (m) => {
+                if (m.presets.length <= 1) return m;
+                const presets = m.presets.filter((_, j) => j !== i);
+                return { ...m, presets, activePreset: Math.min(m.activePreset, presets.length - 1) };
+              })
+            }
           />
         )}
 
@@ -223,16 +267,13 @@ export function GearTab({
             <AddGear
               index={index}
               cats={subCats}
-              owned={active.gear}
+              owned={activeGear(active)}
               onAdd={(piece) =>
-                updateMember(active.id, (m) => ({
-                  ...m,
-                  gear: {
-                    ...m.gear,
-                    [piece.pieceKey]: {
-                      cur: { t: tiersOf(piece)[0] ?? 1, r: raritiesAtTier(piece, tiersOf(piece)[0] ?? 1)[0] || "Common" },
-                      tgt: topTarget(piece),
-                    },
+                updateGear(active.id, (g) => ({
+                  ...g,
+                  [piece.pieceKey]: {
+                    cur: { t: tiersOf(piece)[0] ?? 1, r: raritiesAtTier(piece, tiersOf(piece)[0] ?? 1)[0] || "Common" },
+                    tgt: topTarget(piece),
                   },
                 }))
               }
@@ -245,7 +286,7 @@ export function GearTab({
               stepEach={stepEach}
               onStepEach={setStepEach}
               chosen={chosen}
-              onUpdate={(fn) => updateMember(active.id, fn)}
+              onGear={(fn) => updateGear(active.id, fn)}
             />
           </>
         )}
@@ -262,18 +303,21 @@ export function GearTab({
               </option>
             ))}
           </select>
+          <span className="muted small gear-scope-note">
+            (each person's <b>{active?.presets[active.activePreset]?.name ?? "active"}</b> preset)
+          </span>
         </div>
         {upgradeCount === 0 ? (
           <div className="panel empty">
             <h2>Track gear upgrades for your village</h2>
             <p>
-              Add people, pull their gear &amp; levels from Bitjita, and set the tier and{" "}
-              <b>rarity</b> you want each piece to reach. BitForge totals every upgrade's materials
-              and <b>divides them by profession</b> — for one person or the whole village.
+              Add people, pull their gear &amp; levels from Bitjita (all three loadout presets), and
+              set the tier and <b>rarity</b> you want each piece to reach. BitForge totals every
+              upgrade's materials and <b>divides them by profession</b>.
             </p>
             <p className="hint">
               New pieces default to their top craftable tier &amp; rarity, so you'll see what it
-              takes to max everything out. Lower a target if that's too far.
+              takes to max out. The shopping list sums the active preset of each person in scope.
             </p>
           </div>
         ) : (
@@ -305,6 +349,7 @@ function MemberBar({
   onSelect: (id: string) => void;
   onAdd: () => void;
 }) {
+  const count = (m: Member) => m.presets.reduce((s, p) => s + Object.keys(p.gear).length, 0);
   return (
     <div className="member-bar">
       {village.map((m) => (
@@ -314,11 +359,44 @@ function MemberBar({
           onClick={() => onSelect(m.id)}
         >
           {m.name}
-          <span className="member-count">{Object.keys(m.gear).length}</span>
+          <span className="member-count">{count(m)}</span>
         </button>
       ))}
       <button className="member-add" onClick={onAdd} title="Add a person">
         + Person
+      </button>
+    </div>
+  );
+}
+
+function PresetTabs({
+  member,
+  onSelect,
+  onAdd,
+  onRemove,
+}: {
+  member: Member;
+  onSelect: (i: number) => void;
+  onAdd: () => void;
+  onRemove: (i: number) => void;
+}) {
+  return (
+    <div className="preset-tabs">
+      {member.presets.map((p, i) => (
+        <span key={i} className={i === member.activePreset ? "preset-tab on" : "preset-tab"}>
+          <button className="preset-tab-btn" onClick={() => onSelect(i)}>
+            {p.name}
+            <span className="preset-count">{Object.keys(p.gear).length}</span>
+          </button>
+          {member.presets.length > 1 && (
+            <button className="preset-x" onClick={() => onRemove(i)} title="Remove preset">
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+      <button className="preset-add" onClick={onAdd} title="Add a preset">
+        +
       </button>
     </div>
   );
@@ -358,30 +436,30 @@ function MemberPanel({
       return;
     }
     onUpdate((m) => {
-      const gear = { ...m.gear };
-      let added = 0;
-      for (const it of eq?.items ?? []) {
-        const piece = pieceForItem(data, index, it.key);
-        if (!piece) continue;
-        const cur = {
-          t: it.tier ?? tiersOf(piece)[0] ?? 1,
-          r: it.rarity || raritiesAtTier(piece, it.tier ?? tiersOf(piece)[0] ?? 1)[0] || "Common",
-        };
-        const existing = gear[piece.pieceKey];
-        gear[piece.pieceKey] = { cur, tgt: existing?.tgt ?? topTarget(piece) };
-        added++;
-      }
+      const presets: Preset[] = [...m.presets];
+      (eq?.presets ?? []).forEach((pp, i) => {
+        const existing = presets[i] ?? { name: pp.name, gear: {} };
+        const gear = { ...existing.gear };
+        for (const it of pp.items) {
+          const piece = pieceForItem(data, index, it.key);
+          if (!piece) continue;
+          const tier = it.tier && it.tier > 0 ? it.tier : tiersOf(piece)[0] ?? 1;
+          const cur = { t: tier, r: it.rarity || raritiesAtTier(piece, tier)[0] || "Common" };
+          gear[piece.pieceKey] = { cur, tgt: existing.gear[piece.pieceKey]?.tgt ?? topTarget(piece) };
+        }
+        presets[i] = { name: pp.name || existing.name, gear };
+      });
       return {
         ...m,
-        gear,
+        presets,
         skills: prof?.skills?.length ? prof.skills : m.skills,
-        name: m.name === "Me" && prof?.name ? prof.name : m.name,
+        name: (m.name === "Me" || /^Person \d+$/.test(m.name)) && prof?.name ? prof.name : m.name,
       };
     });
-    const parts = [];
-    if (eq) parts.push(`${eq.count} pieces`);
-    if (prof) parts.push(`${prof.skills.length} skills`);
-    setMsg(parts.length ? `Pulled ${parts.join(" + ")}.` : "Nothing found for that player.");
+    const parts: string[] = [];
+    if (eq) parts.push(`${eq.count} pieces in ${eq.presets.length} preset${eq.presets.length === 1 ? "" : "s"}`);
+    if (prof?.skills.length) parts.push(`${prof.skills.length} skills`);
+    setMsg(parts.length ? `Pulled ${parts.join(" + ")}.` : "Reached Bitjita but found no gear/skills for that player.");
   }
 
   const topSkills = [...member.skills].sort((a, b) => b.level - a.level);
@@ -502,7 +580,7 @@ function TrackingPanel({
   stepEach,
   onStepEach,
   chosen,
-  onUpdate,
+  onGear,
 }: {
   data: GameData;
   index: GearIndex;
@@ -511,9 +589,10 @@ function TrackingPanel({
   stepEach: boolean;
   onStepEach: (b: boolean) => void;
   chosen: Record<ItemKey, number>;
-  onUpdate: (fn: (m: Member) => Member) => void;
+  onGear: (fn: (g: Record<string, PieceState>) => Record<string, PieceState>) => void;
 }) {
-  const entries = Object.entries(member.gear)
+  const gear = activeGear(member);
+  const entries = Object.entries(gear)
     .map(([pk, st]) => ({ piece: index.pieces.get(pk), st, pk }))
     .filter((e) => e.piece && cats.includes(e.piece.category)) as {
     piece: GearPiece;
@@ -523,20 +602,20 @@ function TrackingPanel({
   entries.sort((a, b) => a.piece.tag.localeCompare(b.piece.tag) || a.piece.suffix.localeCompare(b.piece.suffix));
 
   function setState(pk: string, st: PieceState) {
-    onUpdate((m) => ({ ...m, gear: { ...m.gear, [pk]: st } }));
+    onGear((g) => ({ ...g, [pk]: st }));
   }
   function remove(pk: string) {
-    onUpdate((m) => {
-      const gear = { ...m.gear };
-      delete gear[pk];
-      return { ...m, gear };
+    onGear((g) => {
+      const next = { ...g };
+      delete next[pk];
+      return next;
     });
   }
   function maxAll() {
-    onUpdate((m) => {
-      const gear = { ...m.gear };
-      for (const { pk, piece } of entries) gear[pk] = { ...gear[pk], tgt: topTarget(piece) };
-      return { ...m, gear };
+    onGear((g) => {
+      const next = { ...g };
+      for (const { pk, piece } of entries) next[pk] = { ...next[pk], tgt: topTarget(piece) };
+      return next;
     });
   }
 
@@ -553,8 +632,7 @@ function TrackingPanel({
     return (
       <div className="panel">
         <p className="hint" style={{ margin: 0 }}>
-          No {SUBTABS.find((s) => s.cats === cats || s.cats.join() === cats.join())?.label.toLowerCase() ?? "gear"} tracked
-          for {member.name} yet — pull from Bitjita or add some above.
+          Nothing tracked here yet for {member.name} — pull from Bitjita or add some above.
         </p>
       </div>
     );
@@ -563,7 +641,7 @@ function TrackingPanel({
   return (
     <div className="panel">
       <div className="panel-head">
-        <h2>{member.name}'s gear</h2>
+        <h2>{member.name} · {member.presets[member.activePreset]?.name}</h2>
         <div className="spacer" />
         <button className="btn ghost small" onClick={maxAll} title="Set every target to top tier & rarity">
           Max all ★
@@ -618,7 +696,6 @@ function PieceRow({
   const rec = level != null ? recommendedTier(data, piece, level) : null;
   const targetItem = resolve(piece, st.tgt.t, st.tgt.r);
 
-  // Keep a rarity valid for the chosen tier.
   function curTier(t: number) {
     const rs = raritiesAtTier(piece, t, false);
     const r = rs.includes(st.cur.r) ? st.cur.r : rs[0] || "Common";
@@ -717,9 +794,7 @@ function PieceRow({
           ★
         </button>
       </div>
-      {upgrading && targetItem && (
-        <div className="gear-target-name">→ {itemName(data, targetItem.key)}</div>
-      )}
+      {upgrading && targetItem && <div className="gear-target-name">→ {itemName(data, targetItem.key)}</div>}
       {open && stepCosts.length > 0 && (
         <ol className="gear-steps">
           {stepCosts.map(({ item, mats, units }) => (

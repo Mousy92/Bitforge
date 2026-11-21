@@ -1,9 +1,10 @@
 // GET /api/equipment?player=<id>[&debug=1]
-// Proxies the Bitjita player-equipment endpoint and normalizes it into a flat
-// list of equipped items: { slot, key, tier, rarity, name }. The browser can't
-// call Bitjita directly (CORS / rate limits), so this does it server-side on
-// Cloudflare's edge. ?debug=1 returns the raw structure so field names can be
-// inspected against the live response (the exact schema isn't documented).
+// Proxies the Bitjita player equipment-presets endpoint and normalizes it into
+// a list of presets, each with its equipped items:
+//   { presets: [{ name, items: [{ slot, key, tier, rarity, name }] }], count }
+// Bitjita groups equipped gear under presets (loadouts), each a set of named
+// slots. The exact JSON schema isn't documented, so extraction is defensive and
+// ?debug=1 returns the raw payloads so field names can be inspected.
 
 const BITJITA = "https://bitjita.com";
 
@@ -16,42 +17,44 @@ function json(obj: unknown, status = 200, cache = 0): Response {
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
-// Pull the first defined value among several candidate field names.
 function pick(node: any, keys: string[]): any {
   for (const k of keys) if (node != null && node[k] != null) return node[k];
   return undefined;
 }
 
-// Given an element of the equipment array, find the underlying item object.
-// Bitjita may put item fields directly on the slot element, or nest them under
-// .item / .contents / .stack — handle all of these.
-function itemOf(node: any): any {
-  if (!node || typeof node !== "object") return null;
-  const nested = node.item ?? node.contents ?? node.stack ?? node.equipment ?? null;
-  if (nested && typeof nested === "object" && (nested.item_id ?? nested.itemId ?? nested.id) != null)
-    return nested;
-  if ((node.item_id ?? node.itemId ?? node.id) != null) return node;
-  return nested || null;
+async function getJSON(url: string): Promise<any | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "user-agent": "bitforge/1.0 (+bitforge.mousyhub.com)", accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
-function extract(node: any): {
-  slot: string;
-  key: string;
-  itemId: number;
-  type: string;
-  tier: number | null;
-  rarity: string | null;
-  name: string | null;
-} | null {
-  const it = itemOf(node);
-  if (!it) return null;
-  const rawId = pick(it, ["item_id", "itemId", "id"]);
-  const id = Number(rawId);
-  if (!Number.isFinite(id)) return null;
-  const typeStr = String(pick(it, ["item_type", "type", "itemType"]) ?? "Item").toLowerCase();
+// Extract one equipped item from a slot entry. `slotKey` is the key under which
+// the entry was found when the collection is an object map.
+function extractItem(
+  el: any,
+  slotKey: string | null
+): { slot: string; key: string; itemId: number; type: string; tier: number | null; rarity: string | null; name: string | null } | null {
+  if (!el || typeof el !== "object") return null;
+  // The item fields may be directly on the entry or nested.
+  const it = el.item ?? el.contents ?? el.equipment ?? el.stack ?? el;
+  if (!it || typeof it !== "object") return null;
+  // Prefer explicit item-id fields over a bare `id` (which may be a slot id).
+  const idRaw =
+    it.item_id ?? it.itemId ?? it.itemID ?? el.item_id ?? el.itemId ?? el.itemID ?? it.id ?? el.id;
+  const id = Number(idRaw);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const typeStr = String(pick(it, ["item_type", "type", "itemType"]) ?? pick(el, ["item_type", "type"]) ?? "Item").toLowerCase();
   const kind = typeStr.startsWith("cargo") ? "c" : "i";
   const slot = String(
-    pick(node, ["slot", "slotName", "slot_name", "slotType", "slot_type", "equipmentSlot", "index"]) ?? ""
+    pick(el, ["slot", "slotName", "slot_name", "slotType", "slot_type", "equipmentSlot", "name"]) ??
+      slotKey ??
+      ""
   );
   const tierRaw = pick(it, ["tier", "level", "itemTier"]);
   const tier = tierRaw == null ? null : Number(tierRaw);
@@ -68,19 +71,50 @@ function extract(node: any): {
   };
 }
 
-// Find the array most likely to hold equipment slots.
-function equipmentArray(data: any): any[] {
-  if (Array.isArray(data)) return data;
-  for (const k of ["equipment", "equipped", "slots", "gear", "items"]) {
-    if (Array.isArray(data?.[k])) return data[k];
+// Turn a slot collection (array of entries, or an object map slot->entry) into items.
+function itemsFromCollection(coll: any): ReturnType<typeof extractItem>[] {
+  if (!coll) return [];
+  const entries: [string | null, any][] = Array.isArray(coll)
+    ? coll.map((e) => [null, e] as [null, any])
+    : typeof coll === "object"
+      ? Object.entries(coll)
+      : [];
+  const out: ReturnType<typeof extractItem>[] = [];
+  for (const [slotKey, el] of entries) {
+    const item = extractItem(el, slotKey);
+    if (item) out.push(item);
   }
-  // Some responses wrap it one level deeper (e.g. { player: { equipment: [...] } }).
+  return out;
+}
+
+// The collection of slots inside a preset-ish object.
+function collectionOf(node: any): any {
+  if (Array.isArray(node)) return node;
+  return (
+    pick(node, ["equipment", "equipped", "slots", "gear", "items", "loadout"]) ?? node
+  );
+}
+
+// Find the list of presets in the response. Falls back to treating the whole
+// response as a single "Equipped" set.
+function findPresets(data: any): { name: string; coll: any }[] {
+  const p = pick(data, ["presets", "equipmentPresets", "equipment_presets", "loadouts"]);
+  if (Array.isArray(p) && p.length) {
+    return p.map((pre, i) => ({
+      name: String(pick(pre, ["name", "presetName", "label", "title"]) ?? `Preset ${i + 1}`),
+      coll: collectionOf(pre),
+    }));
+  }
+  // single equipment collection somewhere in the payload
+  const eq = pick(data, ["equipment", "equipped", "slots", "gear"]);
+  if (eq) return [{ name: "Equipped", coll: collectionOf(eq) }];
+  if (Array.isArray(data)) return [{ name: "Equipped", coll: data }];
+  // one level deeper (e.g. { player: { presets: [...] } })
   if (data && typeof data === "object") {
     for (const v of Object.values(data)) {
       if (v && typeof v === "object") {
-        for (const k of ["equipment", "equipped", "slots", "gear"]) {
-          if (Array.isArray((v as any)[k])) return (v as any)[k];
-        }
+        const inner = findPresets(v);
+        if (inner.length && inner.some((pr) => itemsFromCollection(pr.coll).length)) return inner;
       }
     }
   }
@@ -93,34 +127,33 @@ export async function onRequestGet(context: any): Promise<Response> {
   const debug = url.searchParams.get("debug");
   if (!/^\d{1,25}$/.test(player)) return json({ error: "invalid player id" }, 400);
 
-  let res: Response;
-  try {
-    res = await fetch(`${BITJITA}/api/players/${player}/equipment`, {
-      headers: { "user-agent": "bitforge/1.0 (+bitforge.mousyhub.com)", accept: "application/json" },
-    });
-  } catch (e) {
-    return json({ error: "upstream fetch failed", detail: String(e) }, 502);
-  }
-  if (!res.ok) return json({ error: "upstream error", status: res.status }, 502);
-
-  let data: any;
-  try {
-    data = await res.json();
-  } catch {
-    return json({ error: "upstream returned non-JSON" }, 502);
-  }
-
-  const arr = equipmentArray(data);
+  const base = `${BITJITA}/api/players/${player}`;
+  // Prefer the presets endpoint; fall back to the plain equipment endpoint.
+  const presetsRaw = await getJSON(`${base}/equipment/presets`);
+  const equipRaw = presetsRaw == null ? await getJSON(`${base}/equipment`) : null;
+  const sourceData = presetsRaw ?? equipRaw;
 
   if (debug) {
     return json({
-      topKeys: data && typeof data === "object" ? Object.keys(data) : typeof data,
-      equipmentLen: arr.length,
-      sampleRaw: arr.length ? arr[0] : null,
-      sampleExtracted: arr.length ? extract(arr[0]) : null,
+      triedPresets: `${base}/equipment/presets`,
+      triedEquipment: `${base}/equipment`,
+      presetsTopKeys: presetsRaw && typeof presetsRaw === "object" ? Object.keys(presetsRaw) : typeof presetsRaw,
+      equipTopKeys: equipRaw && typeof equipRaw === "object" ? Object.keys(equipRaw) : typeof equipRaw,
+      rawPresets: presetsRaw,
+      rawEquipment: equipRaw,
     });
   }
 
-  const items = arr.map(extract).filter((x): x is NonNullable<typeof x> => x != null);
-  return json({ player, count: items.length, items }, 200, 15);
+  if (sourceData == null) return json({ error: "upstream error or no data" }, 502);
+
+  const presets = findPresets(sourceData)
+    .map((pr) => ({
+      name: pr.name,
+      items: itemsFromCollection(pr.coll).filter((x): x is NonNullable<typeof x> => x != null),
+    }))
+    .filter((pr) => pr.items.length > 0);
+
+  const count = presets.reduce((s, p) => s + p.items.length, 0);
+  // `items` kept for backward-compat: the first preset's items.
+  return json({ player, presets, items: presets[0]?.items ?? [], count }, 200, 15);
 }
