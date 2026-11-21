@@ -15,7 +15,8 @@ import type { Build } from "./model";
 export interface PlanLine {
   key: ItemKey;
   name: string;
-  qty: number; // total quantity needed
+  qty: number; // total (gross) quantity needed
+  onHand: number; // quantity already owned (consumed from storage), <= qty
   tier: number;
   rarity: string;
   profession: string;
@@ -78,25 +79,41 @@ const PROF_ORDER = [
 ];
 
 /**
- * Expand `build` into a full plan.
+ * Expand `build` into a plan of NET requirements.
  * @param chosen optional map of itemKey -> recipe index, when an item has
  *               multiple recipes and the user picked a non-default one.
+ * @param onHand optional map of itemKey -> quantity already owned (e.g. pulled
+ *               from storage). Owned quantities are consumed as the tree is
+ *               walked, so having an intermediate item removes its whole
+ *               ingredient sub-tree — you only gather/craft the shortfall.
  */
 export function planBuild(
   data: GameData,
   build: Build,
-  chosen: Record<ItemKey, number> = {}
+  chosen: Record<ItemKey, number> = {},
+  onHand: Record<ItemKey, number> = {}
 ): Plan {
-  const totals = new Map<ItemKey, number>();
+  const totals = new Map<ItemKey, number>(); // gross quantity referenced
+  const used = new Map<ItemKey, number>(); // on-hand applied (for display)
+  const left: Record<ItemKey, number> = { ...onHand }; // remaining on-hand
   const warnings: string[] = [];
   const buildings = new Map<number, number>(); // building id -> qty
 
-  // Walk a required item, accumulating totals and recursing into its recipe.
-  // `path` guards against any residual cycles (packaging is already stripped
-  // upstream, but defensive cycle handling keeps the UI from ever hanging).
+  // Walk a required item: record the gross need, consume any on-hand stock, and
+  // only recurse into the recipe for the shortfall. `path` guards cycles.
   function walk(key: ItemKey, qty: number, depth: number, path: Set<ItemKey>) {
     const rk = resolveKey(data, key);
     totals.set(rk, (totals.get(rk) || 0) + qty);
+
+    // Consume on-hand stock first; the rest is what we still need.
+    const avail = left[rk] || 0;
+    if (avail > 0) {
+      const take = Math.min(qty, avail);
+      left[rk] = avail - take;
+      used.set(rk, (used.get(rk) || 0) + take);
+      qty -= take;
+    }
+    if (qty <= 0) return; // fully covered by stock -> prune sub-tree
 
     const recs = recipesFor(data, rk);
     if (!recs.length) return; // raw / gathered leaf
@@ -143,6 +160,7 @@ export function planBuild(
       key,
       name: it?.n ?? key,
       qty,
+      onHand: Math.min(qty, used.get(key) || 0),
       tier: it?.t ?? -1,
       rarity: it?.r ?? "",
       profession: professionFor(data, key, chosen),

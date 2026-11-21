@@ -80,8 +80,8 @@ export default function App() {
   }, [build]);
 
   const plan = useMemo(
-    () => (data ? planBuild(data, build, chosen) : null),
-    [data, build, chosen]
+    () => (data ? planBuild(data, build, chosen, useStorage && storage ? storage : {}) : null),
+    [data, build, chosen, storage, useStorage]
   );
   const buildSig = useBuildSig(build);
 
@@ -188,7 +188,6 @@ export default function App() {
                 chosen={chosen}
                 onChoose={(key, idx) => setChosen((c) => ({ ...c, [key]: idx }))}
                 buildSig={buildSig}
-                storage={useStorage ? storage : null}
               />
             )}
           </section>
