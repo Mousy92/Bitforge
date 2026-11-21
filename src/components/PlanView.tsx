@@ -14,6 +14,9 @@ export function PlanView({
   onChoose,
   buildSig,
   storage,
+  overrides,
+  onOverride,
+  onRefresh,
 }: {
   data: GameData;
   plan: Plan;
@@ -21,6 +24,9 @@ export function PlanView({
   onChoose: (key: ItemKey, idx: number) => void;
   buildSig: string;
   storage?: Record<ItemKey, number> | null;
+  overrides: Record<ItemKey, number>;
+  onOverride: (key: ItemKey, n: number | null) => void;
+  onRefresh: () => void;
 }) {
   const [view, setView] = useState<View>("profession");
   const [progress, setProgress] = useState<Progress>({});
@@ -117,6 +123,9 @@ export function PlanView({
             chosen={chosen}
             onChoose={onChoose}
             storage={storage}
+            overrides={overrides}
+            onOverride={onOverride}
+            onRefresh={onRefresh}
           />
         ))}
 
@@ -131,6 +140,9 @@ export function PlanView({
           onChoose={onChoose}
           flatProf
           storage={storage}
+          overrides={overrides}
+          onOverride={onOverride}
+          onRefresh={onRefresh}
         />
       )}
 
@@ -145,6 +157,9 @@ export function PlanView({
           onChoose={onChoose}
           flatProf
           storage={storage}
+          overrides={overrides}
+          onOverride={onOverride}
+          onRefresh={onRefresh}
         />
       )}
     </div>
@@ -170,6 +185,9 @@ function ProfessionBlock({
   onChoose,
   flatProf,
   storage,
+  overrides,
+  onOverride,
+  onRefresh,
 }: {
   data: GameData;
   title: string;
@@ -180,45 +198,84 @@ function ProfessionBlock({
   onChoose: (key: ItemKey, idx: number) => void;
   flatProf?: boolean;
   storage?: Record<ItemKey, number> | null;
+  overrides: Record<ItemKey, number>;
+  onOverride: (key: ItemKey, n: number | null) => void;
+  onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const stored = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
-  const effHave = (l: PlanLine) => (progress[l.key] || 0) + stored(l.key);
+  const hasOverride = (key: ItemKey) => overrides[key] !== undefined;
+  // A hardset override wins; otherwise manual progress + pulled storage.
+  const effHave = (l: PlanLine) =>
+    hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key);
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
 
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <div className="profblock">
-      <button className="profhead" onClick={() => setOpen((o) => !o)}>
-        <span className="chev">{open ? "▾" : "▸"}</span>
-        <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
-        <span className="profmeta">
-          {lines.length} {lines.length === 1 ? "item" : "items"}
-        </span>
-        <span className="profbar">
-          <span className="profbar-fill" style={{ width: `${pct}%` }} />
-        </span>
-        <span className="profpct">{pct}%</span>
-      </button>
+      <div className="profhead">
+        <button className="profhead-main" onClick={() => setOpen((o) => !o)}>
+          <span className="chev">{open ? "▾" : "▸"}</span>
+          <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
+          <span className="profmeta">
+            {lines.length} {lines.length === 1 ? "item" : "items"}
+          </span>
+          <span className="profbar">
+            <span className="profbar-fill" style={{ width: `${pct}%` }} />
+          </span>
+          <span className="profpct">{pct}%</span>
+        </button>
+        <button
+          className="prof-refresh"
+          title="Refresh quantities from storage (keeps your hardset overrides)"
+          disabled={refreshing}
+          onClick={refresh}
+        >
+          {refreshing ? "…" : "↻"}
+        </button>
+      </div>
       {open && (
         <ul className="matlist">
           {lines.map((l) => {
-            const have = progress[l.key] || 0;
-            const inStore = stored(l.key);
-            const eff = have + inStore;
+            const eff = effHave(l);
             const complete = eff >= l.qty;
             const remaining = Math.max(0, l.qty - eff);
+            const inStore = stored(l.key);
+            const have = progress[l.key] || 0;
             const recs = recipesFor(data, l.key);
+            const ov = overrides[l.key];
             return (
               <li key={l.key} className={complete ? "mat done" : "mat"}>
                 <input
                   type="checkbox"
                   checked={complete}
-                  onChange={(e) => onHave(l.key, e.target.checked ? l.qty : 0)}
-                  title="Mark complete"
+                  onChange={(e) => onOverride(l.key, e.target.checked ? l.qty : null)}
+                  title="Hardset complete"
                 />
-                <span className="m-qty" title={inStore ? `${remaining.toLocaleString()} still needed` : undefined}>
-                  {inStore && !complete ? remaining.toLocaleString() : l.qty.toLocaleString()}
+                <input
+                  className="m-override"
+                  type="text"
+                  inputMode="numeric"
+                  value={ov === undefined ? "" : ov}
+                  placeholder="set"
+                  title="Hardset the amount you have (overrides storage, kept on refresh). Clear to go back to auto."
+                  onChange={(e) => {
+                    const t = e.target.value.trim();
+                    onOverride(l.key, t === "" ? null : Number(t.replace(/[^\d]/g, "")) || 0);
+                  }}
+                />
+                <span className="m-qty" title={eff > 0 ? `${remaining.toLocaleString()} still needed` : undefined}>
+                  {eff > 0 && !complete ? remaining.toLocaleString() : l.qty.toLocaleString()}
                 </span>
                 <span className="m-name">
                   {l.name}
@@ -251,11 +308,13 @@ function ProfessionBlock({
                     </span>
                   )}
                   <input
-                    type="number"
-                    min={0}
+                    className="m-have-input"
+                    type="text"
+                    inputMode="numeric"
                     value={have || ""}
                     placeholder="0"
-                    onChange={(e) => onHave(l.key, Number(e.target.value) || 0)}
+                    title="Track what you've gathered (used when no hardset override)"
+                    onChange={(e) => onHave(l.key, Number(e.target.value.replace(/[^\d]/g, "")) || 0)}
                   />
                   <span className="m-have-sep">/ {l.qty.toLocaleString()}</span>
                 </span>

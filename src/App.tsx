@@ -59,6 +59,23 @@ export default function App() {
       /* ignore */
     }
   }
+  // Hardset overrides: a manually-locked "have" per item that takes precedence
+  // over storage and survives storage refreshes. Persisted per build.
+  const [overrides, setOverrides] = useState<Record<ItemKey, number>>({});
+
+  // Re-pull storage using the saved claim id, keeping overrides intact.
+  async function refreshStorage() {
+    if (!data) return;
+    let id = "";
+    try {
+      id = localStorage.getItem("bitforge:claim") || "";
+    } catch {
+      /* ignore */
+    }
+    if (!/^\d{5,25}$/.test(id)) return;
+    const res = await pullInventory(data, id);
+    if (res) setStorage(res.totals);
+  }
 
   useEffect(() => {
     loadGameData().then(setData).catch((e) => setErr(String(e)));
@@ -84,6 +101,29 @@ export default function App() {
     [data, build, chosen]
   );
   const buildSig = useBuildSig(build);
+
+  // Load/persist hardset overrides per build.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("bitforge:override:" + buildSig);
+      setOverrides(raw ? JSON.parse(raw) : {});
+    } catch {
+      setOverrides({});
+    }
+  }, [buildSig]);
+  function setOverride(key: ItemKey, n: number | null) {
+    setOverrides((o) => {
+      const next = { ...o };
+      if (n === null || Number.isNaN(n)) delete next[key];
+      else next[key] = Math.max(0, n);
+      try {
+        localStorage.setItem("bitforge:override:" + buildSig, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   function addTarget(t: Target) {
     setBuild((b) => {
@@ -189,6 +229,9 @@ export default function App() {
                 onChoose={(key, idx) => setChosen((c) => ({ ...c, [key]: idx }))}
                 buildSig={buildSig}
                 storage={useStorage ? storage : null}
+                overrides={overrides}
+                onOverride={setOverride}
+                onRefresh={refreshStorage}
               />
             )}
           </section>

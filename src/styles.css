@@ -235,12 +235,19 @@ a:hover { text-decoration: underline; }
 
 /* profession blocks */
 .profblock { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; overflow: hidden; background: var(--bg2); }
-.profhead {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-  background: var(--panel2); border: none; color: var(--text); cursor: pointer;
+.profhead { display: flex; align-items: center; background: var(--panel2); }
+.profhead:hover { background: #273049; }
+.profhead-main {
+  flex: 1; display: flex; align-items: center; gap: 10px;
+  background: transparent; border: none; color: var(--text); cursor: pointer;
   padding: 11px 14px; font-size: 14.5px; text-align: left;
 }
-.profhead:hover { background: #273049; }
+.prof-refresh {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  font-size: 16px; padding: 8px 14px; line-height: 1;
+}
+.prof-refresh:hover { color: var(--amber); }
+.prof-refresh:disabled { opacity: 0.5; cursor: default; }
 .chev { color: var(--muted); width: 12px; }
 .profname { font-weight: 600; }
 .profmeta { color: var(--muted); font-size: 12px; }
@@ -256,7 +263,18 @@ a:hover { text-decoration: underline; }
 .mat.done { opacity: 0.5; }
 .mat.done .m-name { text-decoration: line-through; }
 .mat input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); cursor: pointer; }
+.m-override {
+  width: 44px; background: #0f1320; border: 1px solid var(--line); color: var(--amber);
+  border-radius: 6px; padding: 5px 6px; text-align: right; font: 600 12px var(--mono);
+}
+.m-override:focus { outline: none; border-color: var(--amber); }
+.m-override::placeholder { color: #4a5267; font-weight: 400; }
 .m-qty { font: 600 13px var(--mono); color: var(--amber); min-width: 52px; text-align: right; }
+
+/* no spinner arrows on numeric fields */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .m-name { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .m-tier { font: 10.5px var(--mono); color: var(--blue); background: #1b2a3d; padding: 1px 5px; border-radius: 5px; }
 .m-prof { font-size: 11px; color: var(--muted); }
