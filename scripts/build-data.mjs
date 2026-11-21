@@ -65,6 +65,51 @@ const buildingDesc = load("building_desc");
 const constructionRecipes = load("construction_recipe_desc");
 const craftingRecipes = load("crafting_recipe_desc");
 const buildingTypes = load("building_type_desc");
+const itemListDesc = load("item_list_desc");
+
+// ---- resolve "output token" recipe products ---------------------------------
+// Many production recipes (smelting, refining, cooking) don't output the real
+// item directly; they output a token item whose `item_list_id` points at an
+// item_list of possible yields. The base item is the one guaranteed across every
+// possibility. We resolve those so the recipe attaches to the real item instead
+// of a dead-end "X Output" token.
+const itemDescById = new Map(itemDesc.map((i) => [i.id, i]));
+const itemListById = new Map(itemListDesc.map((l) => [l.id, l]));
+
+function resolveOutputToken(stack) {
+  if (stack.item_type !== "Item") return null;
+  const it = itemDescById.get(stack.item_id);
+  if (!it || !it.item_list_id) return null;
+  const list = itemListById.get(it.item_list_id);
+  if (!list || !Array.isArray(list.possibilities) || !list.possibilities.length) return null;
+
+  // Items guaranteed in EVERY possibility (intersection), with a representative qty.
+  let guaranteed = null;
+  const qtyOf = new Map();
+  for (const poss of list.possibilities) {
+    const here = new Set();
+    for (const it2 of poss.items || []) {
+      const k = `${it2.item_type === "Cargo" ? "c" : "i"}${it2.item_id}`;
+      here.add(k);
+      if (!qtyOf.has(k)) qtyOf.set(k, it2.quantity || 1);
+    }
+    guaranteed = guaranteed === null ? here : new Set([...guaranteed].filter((k) => here.has(k)));
+  }
+  if (guaranteed && guaranteed.size === 1) {
+    const k = [...guaranteed][0];
+    return { key: k, perQty: qtyOf.get(k) || 1 };
+  }
+  // Fallback: the highest-probability possibility that yields a single item.
+  let best = null;
+  for (const poss of list.possibilities) {
+    if ((poss.items || []).length === 1 && (!best || poss.probability > best.probability)) best = poss;
+  }
+  if (best) {
+    const it2 = best.items[0];
+    return { key: `${it2.item_type === "Cargo" ? "c" : "i"}${it2.item_id}`, perQty: it2.quantity || 1 };
+  }
+  return null;
+}
 
 // Membership sets so we can self-heal cross-namespace references: the game data
 // sometimes lists a cargo id inside an item-stack array (and in theory vice versa).
@@ -132,6 +177,18 @@ for (const cg of cargoDesc) {
   };
 }
 
+// Drop internal recipe-output tokens ("X Output" / "X Experiment" with an
+// item_list) from the searchable item set — they aren't real inventory items.
+let droppedTokens = 0;
+for (const key of Object.keys(items)) {
+  if (key[0] !== "i") continue;
+  const it = itemDescById.get(+key.slice(1));
+  if (it && it.item_list_id && /(?: Output| Experiment)$/.test(it.name.trim())) {
+    delete items[key];
+    droppedTokens++;
+  }
+}
+
 // ---- crafting recipes, indexed by the item they produce ----
 // Many recipes share an output; we keep them all so the planner can offer choices.
 const recipes = {};
@@ -148,15 +205,18 @@ for (const r of craftingRecipes) {
   const lvl = (r.level_requirements || [])[0] || {};
   const bq = r.building_requirement || {};
 
-  // One recipe can yield several outputs (e.g. byproducts). Index under each.
+  // One recipe can yield several outputs (e.g. byproducts). Index under each,
+  // resolving output tokens to their real guaranteed product.
   for (const out of outputs) {
-    const outKey = `${resolveKind(out.item_type, out.item_id)}${out.item_id}`;
+    const tok = resolveOutputToken(out);
+    const outKey = tok ? tok.key : `${resolveKind(out.item_type, out.item_id)}${out.item_id}`;
+    const outQty = (out.quantity || 1) * (tok ? tok.perQty : 1);
     const recipe = {
       sk: lvl.skill_id || 0,
       lv: lvl.level || 0,
       bt: bq.building_type || 0,
       bl: bq.tier || 0,
-      out: out.quantity || 1,
+      out: outQty,
       act: r.actions_required || 0,
       mats,
     };
@@ -164,6 +224,35 @@ for (const r of craftingRecipes) {
     recipeCount++;
   }
 }
+
+// ---- alias dead-end materials to their craftable same-name twin -------------
+// BitCraft stores many items twice: a base/inventory id (what recipes consume)
+// and a separate id that the crafting recipe actually produces. When a consumed
+// id has no recipe of its own but a same-name item does, we point it at the
+// craftable one so the material tree doesn't dead-end. Without this, research
+// books, study journals, ingots, cloth, etc. looked like raw materials and their
+// basic ingredients went missing (~4.9k references across all recipes).
+const craftableByName = {};
+for (const key of Object.keys(recipes)) {
+  const n = items[key]?.n;
+  if (n && !(n in craftableByName)) craftableByName[n] = key;
+}
+const aliasMap = {};
+for (const [key, it] of Object.entries(items)) {
+  if (recipes[key]) continue; // already craftable on its own
+  const twin = craftableByName[it.n];
+  if (twin && twin !== key) aliasMap[key] = twin;
+}
+const aliasCount = Object.keys(aliasMap).length;
+function applyAlias(mats) {
+  const merged = {};
+  for (const [k, id, q] of mats) {
+    const ak = aliasMap[`${k}${id}`] || `${k}${id}`;
+    merged[ak] = (merged[ak] || 0) + q;
+  }
+  return Object.entries(merged).map(([key, q]) => [key[0], +key.slice(1), q]);
+}
+for (const recs of Object.values(recipes)) for (const r of recs) r.mats = applyAlias(r.mats);
 
 // ---- strip packaging (pack <-> unpack) cycles -------------------------------
 // BitCraft lets you pack a bulk resource into a cargo "package" and unpack it.
@@ -216,8 +305,10 @@ for (const { base, skill } of Object.values(packaging)) {
   if (it && !recipes[base] && skill && skills[skill]) it.gp = skills[skill];
 }
 
-// Rewrite a material list, expanding any package reference into base units.
+// Rewrite a material list: alias dead-end twins, then expand any package
+// reference into base units.
 function rewriteMats(mats) {
+  mats = applyAlias(mats);
   const out = [];
   for (let [k, id, q] of mats) {
     let key = `${k}${id}`;
@@ -310,6 +401,6 @@ console.log(`Wrote ${OUT}`);
 console.log(
   `  items=${Object.keys(items).length}  buildings=${buildings.length}  ` +
     `recipe-outputs=${Object.keys(recipes).length} (${recipeCount} recipes)  ` +
-    `raw-tagged=${taggedRaw}  size=${(bytes / 1024 / 1024).toFixed(2)}MB  ` +
-    `source=${out.sourceCommit}`
+    `raw-tagged=${taggedRaw}  aliased=${aliasCount}  ` +
+    `size=${(bytes / 1024 / 1024).toFixed(2)}MB  source=${out.sourceCommit}`
 );
