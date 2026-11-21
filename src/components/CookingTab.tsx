@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FoodRaw, GameData } from "../data";
+
+const FAV_KEY = "bitforge:favfoods";
 
 type SortKey = "n" | "t" | "hg" | "hp" | "st";
 
@@ -24,6 +26,31 @@ export function CookingTab({ data }: { data: GameData }) {
   const [buff, setBuff] = useState("");
   const [sort, setSort] = useState<SortKey>("t");
   const [dir, setDir] = useState<1 | -1>(1);
+  const [favs, setFavs] = useState<Set<number>>(new Set());
+  const [favOnly, setFavOnly] = useState(false);
+
+  // Load/persist favorite foods.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FAV_KEY);
+      if (raw) setFavs(new Set(JSON.parse(raw) as number[]));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function toggleFav(id: number) {
+    setFavs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(FAV_KEY, JSON.stringify([...next]));
+      } catch {
+        /* storage may be unavailable */
+      }
+      return next;
+    });
+  }
 
   const tiers = useMemo(() => [...new Set(foods.map((f) => f.t))].filter((t) => t > 0).sort((a, b) => a - b), [foods]);
 
@@ -46,6 +73,7 @@ export function CookingTab({ data }: { data: GameData }) {
   const rows = useMemo(() => {
     const term = q.trim().toLowerCase();
     let r = foods.filter((f) => {
+      if (favOnly && !favs.has(f.id)) return false;
       if (tier !== null && f.t !== tier) return false;
       if (buff && !f.buffs.some((b) => b.stats.some(([lbl]) => lbl === buff))) return false;
       if (!term) return true;
@@ -65,8 +93,12 @@ export function CookingTab({ data }: { data: GameData }) {
         return (cmp || a.n.localeCompare(b.n)) * dir;
       });
     }
+    // Pin favorites to the top (unless already filtering to favorites only).
+    if (!favOnly && favs.size) {
+      r = [...r].sort((a, b) => Number(favs.has(b.id)) - Number(favs.has(a.id)));
+    }
     return r;
-  }, [foods, q, tier, buff, sort, dir]);
+  }, [foods, q, tier, buff, sort, dir, favs, favOnly]);
 
   function setSortKey(k: SortKey) {
     if (k === sort) setDir((d) => (d === 1 ? -1 : 1));
@@ -137,6 +169,14 @@ export function CookingTab({ data }: { data: GameData }) {
               </button>
             )}
           </span>
+          <button
+            className={favOnly ? "tchip on fav-chip" : "tchip fav-chip"}
+            onClick={() => setFavOnly((v) => !v)}
+            title="Show only your saved foods"
+            style={{ marginLeft: "auto" }}
+          >
+            ★ Favorites{favs.size ? ` (${favs.size})` : ""}
+          </button>
         </div>
 
         <div className="food-table-wrap">
@@ -153,7 +193,7 @@ export function CookingTab({ data }: { data: GameData }) {
             </thead>
             <tbody>
               {rows.map((f) => (
-                <FoodRow key={f.id} f={f} active={buff} />
+                <FoodRow key={f.id} f={f} active={buff} fav={favs.has(f.id)} onFav={() => toggleFav(f.id)} />
               ))}
             </tbody>
           </table>
@@ -163,10 +203,28 @@ export function CookingTab({ data }: { data: GameData }) {
   );
 }
 
-function FoodRow({ f, active }: { f: FoodRaw; active?: string }) {
+function FoodRow({
+  f,
+  active,
+  fav,
+  onFav,
+}: {
+  f: FoodRaw;
+  active?: string;
+  fav: boolean;
+  onFav: () => void;
+}) {
   return (
-    <tr>
+    <tr className={fav ? "fav-row" : ""}>
       <td className="food-name">
+        <button
+          className={fav ? "fav-star on" : "fav-star"}
+          onClick={onFav}
+          title={fav ? "Remove from favorites" : "Save as favorite"}
+          aria-label="Toggle favorite"
+        >
+          {fav ? "★" : "☆"}
+        </button>
         {f.n}
         {f.tag && <span className="food-tag">{f.tag}</span>}
         {!f.combat && <span className="food-nocombat" title="Not usable in combat">no-combat</span>}

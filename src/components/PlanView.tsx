@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { type GameData, type ItemKey, itemName, recipesFor } from "../data";
+import {
+  type GameData,
+  type ItemKey,
+  itemName,
+  professionFor,
+  recipesFor,
+  resolveKey,
+} from "../data";
 import type { Plan, PlanLine } from "../engine";
 
 type View = "profession" | "raw" | "flat";
@@ -305,84 +312,226 @@ function ProfessionBlock({
       </div>
       {isOpen && (
         <ul className="matlist">
-          {shown.map((l) => {
-            const eff = effHave(l);
-            const complete = eff >= l.qty;
-            const remaining = Math.max(0, l.qty - eff);
-            const inStore = stored(l.key);
-            const have = progress[l.key] || 0;
-            const recs = recipesFor(data, l.key);
-            const ov = overrides[l.key];
-            return (
-              <li key={l.key} className={complete ? "mat done" : "mat"}>
-                <input
-                  type="checkbox"
-                  checked={complete}
-                  onChange={(e) => onOverride(l.key, e.target.checked ? l.qty : null)}
-                  title="Hardset complete"
-                />
-                <input
-                  className="m-override"
-                  type="text"
-                  inputMode="numeric"
-                  value={ov === undefined ? "" : ov}
-                  placeholder="set"
-                  title="Hardset the amount you have (overrides storage, kept on refresh). Clear to go back to auto."
-                  onChange={(e) => {
-                    const t = e.target.value.trim();
-                    onOverride(l.key, t === "" ? null : Number(t.replace(/[^\d]/g, "")) || 0);
-                  }}
-                />
-                <span className="m-qty" title={eff > 0 ? `${remaining.toLocaleString()} still needed` : undefined}>
-                  {eff > 0 && !complete ? remaining.toLocaleString() : l.qty.toLocaleString()}
-                </span>
-                <span className="m-name">
-                  {l.name}
-                  {l.tier > 0 && <span className="m-tier">T{l.tier}</span>}
-                  {flatProf && <span className="m-prof">{l.profession}</span>}
-                  {l.craftable && l.craftAt && (
-                    <span className="m-at" title="Crafting station">
-                      @ {l.craftAt}
-                    </span>
-                  )}
-                  {recs.length > 1 && (
-                    <select
-                      className="m-recipe"
-                      value={chosen[l.key] ?? 0}
-                      onChange={(e) => onChoose(l.key, Number(e.target.value))}
-                      title="Choose recipe"
-                    >
-                      {recs.map((r, i) => (
-                        <option key={i} value={i}>
-                          via {r.mats.map(([k, id]) => itemName(data, `${k}${id}`)).join(" + ").slice(0, 40)}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </span>
-                <span className="m-have">
-                  {inStore > 0 && (
-                    <span className="m-store" title="In your pulled storage">
-                      📦 {inStore.toLocaleString()}
-                    </span>
-                  )}
-                  <input
-                    className="m-have-input"
-                    type="text"
-                    inputMode="numeric"
-                    value={have || ""}
-                    placeholder="0"
-                    title="Track what you've gathered (used when no hardset override)"
-                    onChange={(e) => onHave(l.key, Number(e.target.value.replace(/[^\d]/g, "")) || 0)}
-                  />
-                  <span className="m-have-sep">/ {l.qty.toLocaleString()}</span>
-                </span>
-              </li>
-            );
-          })}
+          {shown.map((l) => (
+            <MatRow
+              key={l.key}
+              data={data}
+              l={l}
+              eff={effHave(l)}
+              inStore={stored(l.key)}
+              have={progress[l.key] || 0}
+              ov={overrides[l.key]}
+              chosen={chosen}
+              onChoose={onChoose}
+              onOverride={onOverride}
+              onHave={onHave}
+              flatProf={flatProf}
+            />
+          ))}
         </ul>
       )}
     </div>
+  );
+}
+
+function MatRow({
+  data,
+  l,
+  eff,
+  inStore,
+  have,
+  ov,
+  chosen,
+  onChoose,
+  onOverride,
+  onHave,
+  flatProf,
+}: {
+  data: GameData;
+  l: PlanLine;
+  eff: number;
+  inStore: number;
+  have: number;
+  ov: number | undefined;
+  chosen: Record<ItemKey, number>;
+  onChoose: (key: ItemKey, idx: number) => void;
+  onOverride: (key: ItemKey, n: number | null) => void;
+  onHave: (key: ItemKey, n: number) => void;
+  flatProf?: boolean;
+}) {
+  const [showReq, setShowReq] = useState(false);
+  const complete = eff >= l.qty;
+  const remaining = Math.max(0, l.qty - eff);
+  const recs = recipesFor(data, l.key);
+
+  return (
+    <li className={complete ? "mat done" : "mat"}>
+      <div className="mat-main">
+        <input
+          type="checkbox"
+          checked={complete}
+          onChange={(e) => onOverride(l.key, e.target.checked ? l.qty : null)}
+          title="Hardset complete"
+        />
+        <input
+          className="m-override"
+          type="text"
+          inputMode="numeric"
+          value={ov === undefined ? "" : ov}
+          placeholder="set"
+          title="Hardset the amount you have (overrides storage, kept on refresh). Clear to go back to auto."
+          onChange={(e) => {
+            const t = e.target.value.trim();
+            onOverride(l.key, t === "" ? null : Number(t.replace(/[^\d]/g, "")) || 0);
+          }}
+        />
+        <span className="m-qty" title={eff > 0 ? `${remaining.toLocaleString()} still needed` : undefined}>
+          {eff > 0 && !complete ? remaining.toLocaleString() : l.qty.toLocaleString()}
+        </span>
+        <span className="m-name">
+          {l.craftable ? (
+            <button
+              className="m-expand"
+              onClick={() => setShowReq((s) => !s)}
+              title="Show prerequisite materials"
+            >
+              <span className="m-expand-chev">{showReq ? "▾" : "▸"}</span>
+              {l.name}
+            </button>
+          ) : (
+            l.name
+          )}
+          {l.tier > 0 && <span className="m-tier">T{l.tier}</span>}
+          {flatProf && <span className="m-prof">{l.profession}</span>}
+          {l.craftable && l.craftAt && (
+            <span className="m-at" title="Crafting station">
+              @ {l.craftAt}
+            </span>
+          )}
+          {recs.length > 1 && (
+            <select
+              className="m-recipe"
+              value={chosen[l.key] ?? 0}
+              onChange={(e) => onChoose(l.key, Number(e.target.value))}
+              title="Choose recipe"
+            >
+              {recs.map((r, i) => (
+                <option key={i} value={i}>
+                  via {r.mats.map(([k, id]) => itemName(data, `${k}${id}`)).join(" + ").slice(0, 40)}
+                </option>
+              ))}
+            </select>
+          )}
+        </span>
+        <span className="m-have">
+          {inStore > 0 && (
+            <span className="m-store" title="In your pulled storage">
+              📦 {inStore.toLocaleString()}
+            </span>
+          )}
+          <input
+            className="m-have-input"
+            type="text"
+            inputMode="numeric"
+            value={have || ""}
+            placeholder="0"
+            title="Track what you've gathered (used when no hardset override)"
+            onChange={(e) => onHave(l.key, Number(e.target.value.replace(/[^\d]/g, "")) || 0)}
+          />
+          <span className="m-have-sep">/ {l.qty.toLocaleString()}</span>
+        </span>
+      </div>
+      {showReq && l.craftable && (
+        <Prereqs data={data} keyId={l.key} qty={l.qty} chosen={chosen} depth={0} path={new Set()} />
+      )}
+    </li>
+  );
+}
+
+/** The direct ingredients needed to craft `qty` of `keyId`, each expandable further. */
+function Prereqs({
+  data,
+  keyId,
+  qty,
+  chosen,
+  depth,
+  path,
+}: {
+  data: GameData;
+  keyId: ItemKey;
+  qty: number;
+  chosen: Record<ItemKey, number>;
+  depth: number;
+  path: Set<ItemKey>;
+}) {
+  const rk = resolveKey(data, keyId);
+  const recs = recipesFor(data, rk);
+  if (!recs.length) return null;
+  const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
+  const r = recs[idx];
+  const batches = Math.ceil(qty / (r.out || 1));
+  const nextPath = new Set(path);
+  nextPath.add(rk);
+  return (
+    <ul className="prereq">
+      {r.mats.map(([k, id, q]) => (
+        <PrereqNode
+          key={`${k}${id}`}
+          data={data}
+          keyId={`${k}${id}`}
+          qty={q * batches}
+          chosen={chosen}
+          depth={depth + 1}
+          path={nextPath}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function PrereqNode({
+  data,
+  keyId,
+  qty,
+  chosen,
+  depth,
+  path,
+}: {
+  data: GameData;
+  keyId: ItemKey;
+  qty: number;
+  chosen: Record<ItemKey, number>;
+  depth: number;
+  path: Set<ItemKey>;
+}) {
+  const [open, setOpen] = useState(false);
+  const rk = resolveKey(data, keyId);
+  const it = data.items[rk];
+  const recs = recipesFor(data, rk);
+  // A node is a dead end for the tree if it's raw, already on the path (cycle), or too deep.
+  const expandable = recs.length > 0 && !path.has(rk) && depth < 40;
+  const prof = professionFor(data, rk, chosen);
+  return (
+    <li className="prereq-node">
+      <div className="prereq-row">
+        {expandable ? (
+          <button className="prereq-toggle" onClick={() => setOpen((o) => !o)} title="Show its ingredients">
+            {open ? "▾" : "▸"}
+          </button>
+        ) : (
+          <span className="prereq-toggle dim">{recs.length ? "↻" : "•"}</span>
+        )}
+        <span className="prereq-qty">{qty.toLocaleString()}</span>
+        <span className="prereq-name">
+          {it?.n ?? rk}
+          {it && it.t > 0 && <span className="m-tier">T{it.t}</span>}
+          <span className="prereq-prof">{prof}</span>
+        </span>
+      </div>
+      {open && expandable && (
+        <Prereqs data={data} keyId={rk} qty={qty} chosen={chosen} depth={depth} path={path} />
+      )}
+    </li>
   );
 }
 
