@@ -124,11 +124,19 @@ function resolveKind(declaredType, id) {
 }
 const mat = (s) => [resolveKind(s.item_type, s.item_id), s.item_id, s.quantity];
 
-// Exact item-tag -> profession overrides, checked before the keyword rules.
-// Use these for domain corrections where a tag is authoritative.
+// Exact item-tag -> profession overrides for RAW materials, checked before the
+// keyword rules. Use these for domain corrections where a tag is authoritative.
 const TAG_PROFESSION = {
   Straw: "Farming", // straw is a farming byproduct, not a foraged plant
+  "Crop Oil": "Farming", // crop oil is gathered as a byproduct of farming starbulbs
 };
+
+// Item tags that are actually GATHERED byproducts, even though the raw data lists
+// a (misleading) crafting recipe for them. We drop those recipes so the item is
+// treated as a raw material you gather, not something you craft from inputs.
+const RAW_BYPRODUCT_TAGS = new Set([
+  "Crop Oil", // comes from harvesting starbulbs, like straw from grain
+]);
 
 // Keyword -> gathering profession, for raw materials that no recipe produces.
 // Best-effort; anything unmatched falls into the "Raw / Gathered" bucket in the UI.
@@ -217,6 +225,8 @@ for (const r of craftingRecipes) {
   for (const out of outputs) {
     const tok = resolveOutputToken(out);
     const outKey = tok ? tok.key : `${resolveKind(out.item_type, out.item_id)}${out.item_id}`;
+    // Skip recipes for items that are really gathered byproducts (e.g. crop oil).
+    if (RAW_BYPRODUCT_TAGS.has(items[outKey]?.tag)) continue;
     const outQty = (out.quantity || 1) * (tok ? tok.perQty : 1);
     const recipe = {
       sk: lvl.skill_id || 0,
