@@ -25,9 +25,40 @@ export default function App() {
   const [build, setBuild] = useState<Build>(() => buildFromHash() || emptyBuild());
   // chosen recipe index per item key (when multiple recipes exist)
   const [chosen, setChosen] = useState<Record<ItemKey, number>>({});
-  // pulled claim storage (canonical keys -> qty), and whether to subtract it
-  const [storage, setStorage] = useState<Record<ItemKey, number> | null>(null);
-  const [useStorage, setUseStorage] = useState(true);
+  // pulled claim storage (canonical keys -> qty), and whether to subtract it.
+  // Both persist to localStorage so a Pull survives a refresh.
+  const [storage, setStorageState] = useState<Record<ItemKey, number> | null>(() => {
+    try {
+      const r = localStorage.getItem("bitforge:storage");
+      return r ? JSON.parse(r) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [useStorage, setUseStorageState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("bitforge:usestorage") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  function setStorage(s: Record<ItemKey, number> | null) {
+    setStorageState(s);
+    try {
+      if (s) localStorage.setItem("bitforge:storage", JSON.stringify(s));
+      else localStorage.removeItem("bitforge:storage");
+    } catch {
+      /* storage may be unavailable */
+    }
+  }
+  function setUseStorage(b: boolean) {
+    setUseStorageState(b);
+    try {
+      localStorage.setItem("bitforge:usestorage", b ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
 
   useEffect(() => {
     loadGameData().then(setData).catch((e) => setErr(String(e)));
@@ -365,7 +396,14 @@ function StoragePanel({
           className="search"
           placeholder="Claim ID (number from your bitjita.com/claims/… URL)"
           value={claim}
-          onChange={(e) => setClaim(e.target.value)}
+          onChange={(e) => {
+            setClaim(e.target.value);
+            try {
+              localStorage.setItem(CLAIM_LS, e.target.value.trim());
+            } catch {
+              /* ignore */
+            }
+          }}
           inputMode="numeric"
         />
         <button className="btn primary small" disabled={busy} onClick={pull}>
