@@ -19,8 +19,9 @@ import { CookingTab } from "./components/CookingTab";
 import { UpgradeTab } from "./components/UpgradeTab";
 import { GearTab } from "./components/GearTab";
 import { CalcTab } from "./components/CalcTab";
+import { QuickTab } from "./components/QuickTab";
 
-type Tab = "planner" | "cooking" | "upgrade" | "gear" | "calc";
+type Tab = "planner" | "quick" | "cooking" | "upgrade" | "gear" | "calc";
 
 export default function App() {
   const [data, setData] = useState<GameData | null>(null);
@@ -240,6 +241,8 @@ export default function App() {
             )}
           </section>
         </main>
+      ) : tab === "quick" ? (
+        <QuickTab data={data} storage={useStorage ? storage : null} onRefresh={refreshStorage} />
       ) : tab === "cooking" ? (
         <CookingTab data={data} />
       ) : tab === "upgrade" ? (
@@ -276,6 +279,9 @@ function Header({
       <nav className="tabs">
         <button className={tab === "planner" ? "tab active" : "tab"} onClick={() => setTab("planner")}>
           Build Planner
+        </button>
+        <button className={tab === "quick" ? "tab active" : "tab"} onClick={() => setTab("quick")}>
+          Quick Craft
         </button>
         <button className={tab === "cooking" ? "tab active" : "tab"} onClick={() => setTab("cooking")}>
           Cooking
