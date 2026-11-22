@@ -493,6 +493,33 @@ for (const r of extractionRecipes) {
 // Keep the strongest few sources per item.
 for (const k in drops) drops[k] = drops[k].sort((a, b) => b.chance - a.chance).slice(0, 4);
 
+// ---- drop inverted recipes on gatherable resources --------------------------
+// Natural resources you gather (sap, berries, flowers, sand, logs…) sometimes
+// also have an alternate "farm it yourself" recipe that consumes much higher-
+// tier inputs — e.g. Tree Sap (T-1) via 2x Peerless Fertilizer (T6), which drags
+// a whole T6 farming chain (Peerless Berry!) into a T3 book plan. For a gatherable
+// item we drop any recipe whose inputs out-tier the output, so it's treated as a
+// gathered leaf, while keeping legitimate same/lower-tier chains (e.g. log<-trunk).
+const gatherableIds = new Set();
+for (const r of extractionRecipes) {
+  for (const s of r.extracted_item_stacks || []) {
+    const st = s.item_stack;
+    if (st) gatherableIds.add(`${st.item_type === "Cargo" ? "c" : "i"}${st.item_id}`);
+  }
+}
+let droppedInverted = 0;
+for (const key of Object.keys(recipes)) {
+  if (!gatherableIds.has(key)) continue;
+  const ot = items[key]?.t ?? -1;
+  const kept = recipes[key].filter((r) => {
+    const maxIn = Math.max(-1, ...r.mats.map(([k, id]) => items[`${k}${id}`]?.t ?? -1));
+    return maxIn <= ot;
+  });
+  droppedInverted += recipes[key].length - kept.length;
+  if (kept.length) recipes[key] = kept;
+  else delete recipes[key];
+}
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),
