@@ -66,6 +66,7 @@ const constructionRecipes = load("construction_recipe_desc");
 const craftingRecipes = load("crafting_recipe_desc");
 const buildingTypes = load("building_type_desc");
 const itemListDesc = load("item_list_desc");
+const extractionRecipes = load("extraction_recipe_desc");
 const foodDesc = load("food_desc");
 const buffDesc = load("buff_desc");
 
@@ -451,6 +452,47 @@ for (const f of foodDesc) {
 }
 foods.sort((a, b) => a.t - b.t || a.n.localeCompare(b.n));
 
+// ---- RNG drop rates ---------------------------------------------------------
+// Some items only come from random drops: a probabilistic item_list (e.g. a
+// bait or lootable gives item X with chance p) or an extraction/gather recipe
+// whose output has a sub-1 probability. We surface these so the Approx Calc can
+// look up "chance per action" instead of making the user guess.
+// drops: { "<itemKey>": [{ chance (0-1), qty, source }] }  — RNG sources only.
+const drops = {};
+function addDrop(key, chance, qty, source) {
+  if (!(key in items)) return; // only real, catalogued items
+  if (!(chance > 0 && chance < 0.999)) return; // RNG only (skip guaranteed)
+  (drops[key] ||= []).push({ chance: Math.round(chance * 1e4) / 1e4, qty: qty || 1, source });
+}
+for (const L of itemListDesc) {
+  const poss = L.possibilities || [];
+  // Chance an item appears across the roll = sum of the probabilities of the
+  // possibilities that contain it (probabilities outside 0..1 are data quirks
+  // for guaranteed drops; treat >1 as guaranteed and skip).
+  const agg = new Map();
+  for (const p of poss) {
+    const pr = p.probability > 0 && p.probability <= 1 ? p.probability : 0;
+    if (!pr) continue;
+    for (const it of p.items || []) {
+      const key = `${it.item_type === "Cargo" ? "c" : "i"}${it.item_id}`;
+      const cur = agg.get(key) || { chance: 0, qty: it.quantity || 1 };
+      cur.chance += pr;
+      agg.set(key, cur);
+    }
+  }
+  for (const [key, v] of agg) addDrop(key, v.chance, v.qty, L.name);
+}
+for (const r of extractionRecipes) {
+  for (const s of r.extracted_item_stacks || []) {
+    const st = s.item_stack;
+    if (!st) continue;
+    const key = `${st.item_type === "Cargo" ? "c" : "i"}${st.item_id}`;
+    addDrop(key, s.probability, st.quantity || 1, "Gathering");
+  }
+}
+// Keep the strongest few sources per item.
+for (const k in drops) drops[k] = drops[k].sort((a, b) => b.chance - a.chance).slice(0, 4);
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),
@@ -463,6 +505,8 @@ const out = {
   // base/inventory id -> canonical craftable key, so a pulled inventory (which
   // reports base ids) can be matched to the keys the planner uses.
   aliasMap,
+  // RNG drop rates for the Approx Calc.
+  drops,
 };
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });

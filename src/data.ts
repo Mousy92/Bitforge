@@ -67,6 +67,8 @@ export interface GameData {
   recipes: Record<string, RecipeRaw[]>;
   /** base/inventory id -> canonical craftable key (for matching pulled storage) */
   aliasMap?: Record<string, string>;
+  /** RNG drop rates: itemKey -> sources, each { chance 0-1, qty, source name } */
+  drops?: Record<string, { chance: number; qty: number; source: string }[]>;
 }
 
 /** A key like "i1010001" or "c150000" identifying an item/cargo across namespaces. */

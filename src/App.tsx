@@ -247,7 +247,7 @@ export default function App() {
       ) : tab === "gear" ? (
         <GearTab data={data} storage={useStorage ? storage : null} onRefresh={refreshStorage} />
       ) : (
-        <CalcTab />
+        <CalcTab data={data} />
       )}
 
       <Footer data={data} />

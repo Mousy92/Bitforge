@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { GameData } from "../data";
 
 // Approximation calculator for RNG-yield materials (e.g. crushing ore -> sand).
 // You give the drop chance per craft and how many you need; it tells you the
@@ -11,6 +12,7 @@ interface Row {
   chance: string; // % chance of a success per craft
   per: string; // amount gained per success
   need: string; // amount wanted
+  source?: string; // where the rate came from (if looked up)
 }
 
 const CALC_LS = "bitforge:calc";
@@ -54,7 +56,7 @@ function num(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function CalcTab() {
+export function CalcTab({ data }: { data: GameData }) {
   const [rows, setRows] = useState<Row[]>(() => {
     try {
       const r = localStorage.getItem(CALC_LS);
@@ -76,6 +78,38 @@ export function CalcTab() {
   }, [rows]);
 
   const conf = CONFIDENCES[confIdx];
+
+  // Searchable list of items with known RNG drop rates, for one-click add.
+  const [lookup, setLookup] = useState("");
+  const dropList = useMemo(() => {
+    const out: { key: string; name: string; chance: number; qty: number; source: string }[] = [];
+    const drops = data.drops || {};
+    for (const [key, srcs] of Object.entries(drops)) {
+      const it = data.items[key];
+      if (!it || !srcs.length) continue;
+      const best = srcs[0]; // highest-chance source
+      out.push({ key, name: it.n, chance: best.chance, qty: best.qty, source: best.source });
+    }
+    return out;
+  }, [data]);
+  const lookupResults = useMemo(() => {
+    const words = lookup.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    return dropList
+      .filter((d) => {
+        const n = d.name.toLowerCase();
+        return words.every((w) => n.includes(w));
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 12);
+  }, [lookup, dropList]);
+  function addFromDrop(d: { name: string; chance: number; qty: number; source: string }) {
+    setRows((rs) => [
+      ...rs.filter((r) => r.name || r.chance !== "50" || r.need !== "100"),
+      { id: uid(), name: d.name, chance: String(+(d.chance * 100).toFixed(2)), per: String(d.qty), need: "100", source: d.source },
+    ]);
+    setLookup("");
+  }
 
   const computed = useMemo(
     () =>
@@ -129,6 +163,29 @@ export function CalcTab() {
           target even with bad luck.
         </p>
 
+        <div className="calc-lookup">
+          <input
+            className="search"
+            placeholder="🔍 Look up a drop rate from the game… (e.g. crushed shell, infused sand)"
+            value={lookup}
+            onChange={(e) => setLookup(e.target.value)}
+          />
+          {lookupResults.length > 0 && (
+            <ul className="calc-lookup-results">
+              {lookupResults.map((d) => (
+                <li key={d.key}>
+                  <button onClick={() => addFromDrop(d)}>
+                    <span className="cl-name">{d.name}</span>
+                    <span className="cl-rate">
+                      {+(d.chance * 100).toFixed(2)}% → {d.qty} · {d.source}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <div className="calc-table-wrap">
           <table className="calc-table">
             <thead>
@@ -152,6 +209,7 @@ export function CalcTab() {
                       value={r.name}
                       onChange={(e) => update(r.id, "name", e.target.value)}
                     />
+                    {r.source && <span className="calc-src">from {r.source}</span>}
                   </td>
                   <td className="num">
                     <span className="calc-pct">
