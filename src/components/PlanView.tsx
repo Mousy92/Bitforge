@@ -38,6 +38,24 @@ export function PlanView({
   const [view, setView] = useState<View>("profession");
   const [progress, setProgress] = useState<Progress>({});
   const [filter, setFilter] = useState("");
+  const [hideDone, setHideDone] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("bitforge:hidedone") === "1";
+    } catch {
+      return false;
+    }
+  });
+  function toggleHideDone(v: boolean) {
+    setHideDone(v);
+    try {
+      localStorage.setItem("bitforge:hidedone", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+  function scrollToProf(i: number) {
+    document.getElementById("profsec-" + i)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   // Load/save progress scoped to this build.
   useEffect(() => {
@@ -157,7 +175,28 @@ export function PlanView({
             match
           </span>
         )}
+        <label className="hidedone-toggle" title="Hide materials you've already finished">
+          <input type="checkbox" checked={hideDone} onChange={(e) => toggleHideDone(e.target.checked)} />
+          Hide completed
+        </label>
       </div>
+
+      {view === "profession" && plan.byProfession.length > 1 && (
+        <div className="prof-jump">
+          <span className="prof-jump-label">Jump to:</span>
+          {plan.byProfession.map((g, i) => {
+            const done = g.lines.filter((l) => effHaveTop(l) >= l.qty).length;
+            const pct = g.lines.length ? Math.round((done / g.lines.length) * 100) : 0;
+            if (hideDone && done >= g.lines.length) return null;
+            return (
+              <button key={g.profession} className="prof-jump-chip" onClick={() => scrollToProf(i)}>
+                <span dangerouslySetInnerHTML={{ __html: g.profession }} />
+                <em className={pct === 100 ? "done" : ""}>{pct}%</em>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {plan.warnings.length > 0 && (
         <div className="warnings">
@@ -168,9 +207,10 @@ export function PlanView({
       )}
 
       {view === "profession" &&
-        plan.byProfession.map((g) => (
+        plan.byProfession.map((g, i) => (
           <ProfessionBlock
             key={g.profession}
+            anchor={"profsec-" + i}
             data={data}
             title={g.profession}
             lines={g.lines}
@@ -183,6 +223,7 @@ export function PlanView({
             onOverride={onOverride}
             onRefresh={onRefresh}
             filter={filter}
+            hideDone={hideDone}
           />
         ))}
 
@@ -201,6 +242,7 @@ export function PlanView({
           onOverride={onOverride}
           onRefresh={onRefresh}
           filter={filter}
+          hideDone={hideDone}
         />
       )}
 
@@ -219,6 +261,7 @@ export function PlanView({
           onOverride={onOverride}
           onRefresh={onRefresh}
           filter={filter}
+          hideDone={hideDone}
         />
       )}
     </div>
@@ -248,6 +291,8 @@ function ProfessionBlock({
   onOverride,
   onRefresh,
   filter,
+  hideDone,
+  anchor,
 }: {
   data: GameData;
   title: string;
@@ -262,6 +307,8 @@ function ProfessionBlock({
   onOverride: (key: ItemKey, n: number | null) => void;
   onRefresh: () => void;
   filter?: string;
+  hideDone?: boolean;
+  anchor?: string;
 }) {
   const [open, setOpen] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -271,9 +318,10 @@ function ProfessionBlock({
   const effHave = (l: PlanLine) =>
     hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key);
   const term = (filter || "").trim().toLowerCase();
-  const shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
-  // When filtering, hide sections with no matches and auto-open matching ones.
-  if (term && shown.length === 0) return null;
+  let shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
+  if (hideDone) shown = shown.filter((l) => effHave(l) < l.qty);
+  // Hide a section with nothing to show (no matches, or all done when hiding completed).
+  if ((term || hideDone) && shown.length === 0) return null;
   const isOpen = term ? true : open;
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
@@ -288,13 +336,17 @@ function ProfessionBlock({
   }
 
   return (
-    <div className="profblock">
+    <div className="profblock" id={anchor}>
       <div className="profhead">
         <button className="profhead-main" onClick={() => setOpen((o) => !o)}>
           <span className="chev">{isOpen ? "▾" : "▸"}</span>
           <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
           <span className="profmeta">
-            {term ? `${shown.length} of ${lines.length}` : `${lines.length} ${lines.length === 1 ? "item" : "items"}`}
+            {term
+              ? `${shown.length} of ${lines.length}`
+              : hideDone
+                ? `${shown.length} left of ${lines.length}`
+                : `${lines.length} ${lines.length === 1 ? "item" : "items"}`}
           </span>
           <span className="profbar">
             <span className="profbar-fill" style={{ width: `${pct}%` }} />

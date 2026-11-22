@@ -244,7 +244,15 @@ a:hover { text-decoration: underline; }
 .warnings { background: #2a1e14; border: 1px solid #553; color: #e7b26b; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; margin-bottom: 12px; }
 
 /* materials filter */
-.mat-filter { position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.mat-filter { position: relative; display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.hidedone-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; margin-left: auto; white-space: nowrap; }
+.hidedone-toggle input { accent-color: var(--amber); }
+.prof-jump { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.prof-jump-label { font-size: 11.5px; color: var(--muted); margin-right: 2px; }
+.prof-jump-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg2); border: 1px solid var(--line); color: var(--text); border-radius: 20px; padding: 4px 11px; font-size: 12.5px; cursor: pointer; }
+.prof-jump-chip:hover { border-color: var(--amber); color: var(--amber); }
+.prof-jump-chip em { font: 10.5px var(--mono); color: var(--muted); font-style: normal; }
+.prof-jump-chip em.done { color: var(--green); }
 .mat-filter .search { flex: 1; }
 .mat-filter-x {
   position: absolute; right: 70px; background: transparent; border: none; color: var(--muted);
