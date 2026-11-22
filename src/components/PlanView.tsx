@@ -53,9 +53,43 @@ export function PlanView({
       /* ignore */
     }
   }
+  // Collapse state per profession section (by index). Collapsed = in the set.
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  function toggleSection(i: number) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  }
   function scrollToProf(i: number) {
     document.getElementById("profsec-" + i)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+  // Jump: open only this section, collapse the rest, then scroll to it.
+  function soloSection(i: number, count: number) {
+    const next = new Set<number>();
+    for (let j = 0; j < count; j++) if (j !== i) next.add(j);
+    setCollapsed(next);
+    setTimeout(() => scrollToProf(i), 40);
+  }
+
+  // Floating "back to top" that also names the section you're currently in.
+  const [scrolled, setScrolled] = useState(false);
+  const [curProf, setCurProf] = useState("");
+  useEffect(() => {
+    function onScroll() {
+      setScrolled(window.scrollY > 260);
+      let cur = "";
+      for (let i = 0; i < plan.byProfession.length; i++) {
+        const el = document.getElementById("profsec-" + i);
+        if (el && el.getBoundingClientRect().top <= 140) cur = plan.byProfession[i].profession;
+      }
+      setCurProf(cur);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [plan.byProfession, view]);
 
   // Load/save progress scoped to this build.
   useEffect(() => {
@@ -189,12 +223,22 @@ export function PlanView({
             const pct = g.lines.length ? Math.round((done / g.lines.length) * 100) : 0;
             if (hideDone && done >= g.lines.length) return null;
             return (
-              <button key={g.profession} className="prof-jump-chip" onClick={() => scrollToProf(i)}>
+              <button
+                key={g.profession}
+                className="prof-jump-chip"
+                onClick={() => soloSection(i, plan.byProfession.length)}
+                title={`Show only ${g.profession}`}
+              >
                 <span dangerouslySetInnerHTML={{ __html: g.profession }} />
                 <em className={pct === 100 ? "done" : ""}>{pct}%</em>
               </button>
             );
           })}
+          {collapsed.size > 0 && (
+            <button className="prof-jump-all" onClick={() => setCollapsed(new Set())} title="Expand every section">
+              Expand all
+            </button>
+          )}
         </div>
       )}
 
@@ -224,6 +268,8 @@ export function PlanView({
             onRefresh={onRefresh}
             filter={filter}
             hideDone={hideDone}
+            open={!collapsed.has(i)}
+            onToggleOpen={() => toggleSection(i)}
           />
         ))}
 
@@ -264,6 +310,17 @@ export function PlanView({
           hideDone={hideDone}
         />
       )}
+
+      {scrolled && (
+        <button
+          className="backtotop"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          title="Back to top"
+        >
+          {curProf && <span className="btt-prof" dangerouslySetInnerHTML={{ __html: curProf }} />}
+          <span className="btt-arrow">↑ Top</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -293,6 +350,8 @@ function ProfessionBlock({
   filter,
   hideDone,
   anchor,
+  open,
+  onToggleOpen,
 }: {
   data: GameData;
   title: string;
@@ -309,8 +368,16 @@ function ProfessionBlock({
   filter?: string;
   hideDone?: boolean;
   anchor?: string;
+  open?: boolean;
+  onToggleOpen?: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [openLocal, setOpenLocal] = useState(true);
+  const controlled = open !== undefined;
+  const openState = controlled ? open : openLocal;
+  const toggleOpen = () => (controlled ? onToggleOpen?.() : setOpenLocal((o) => !o));
+  // Per-section hide-completed: null = follow the global toggle, else override it.
+  const [localHide, setLocalHide] = useState<boolean | null>(null);
+  const effHide = localHide === null ? !!hideDone : localHide;
   const [refreshing, setRefreshing] = useState(false);
   const stored = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
   const hasOverride = (key: ItemKey) => overrides[key] !== undefined;
@@ -319,10 +386,10 @@ function ProfessionBlock({
     hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key);
   const term = (filter || "").trim().toLowerCase();
   let shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
-  if (hideDone) shown = shown.filter((l) => effHave(l) < l.qty);
+  if (effHide) shown = shown.filter((l) => effHave(l) < l.qty);
   // Hide a section with nothing to show (no matches, or all done when hiding completed).
-  if ((term || hideDone) && shown.length === 0) return null;
-  const isOpen = term ? true : open;
+  if ((term || effHide) && shown.length === 0) return null;
+  const isOpen = term ? true : openState;
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
   const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
 
@@ -338,13 +405,13 @@ function ProfessionBlock({
   return (
     <div className="profblock" id={anchor}>
       <div className="profhead">
-        <button className="profhead-main" onClick={() => setOpen((o) => !o)}>
+        <button className="profhead-main" onClick={toggleOpen}>
           <span className="chev">{isOpen ? "▾" : "▸"}</span>
           <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
           <span className="profmeta">
             {term
               ? `${shown.length} of ${lines.length}`
-              : hideDone
+              : effHide
                 ? `${shown.length} left of ${lines.length}`
                 : `${lines.length} ${lines.length === 1 ? "item" : "items"}`}
           </span>
@@ -352,6 +419,13 @@ function ProfessionBlock({
             <span className="profbar-fill" style={{ width: `${pct}%` }} />
           </span>
           <span className="profpct">{pct}%</span>
+        </button>
+        <button
+          className={effHide ? "prof-hide on" : "prof-hide"}
+          title={effHide ? "Showing only unfinished — click to show completed" : "Hide completed in this section"}
+          onClick={() => setLocalHide(!effHide)}
+        >
+          {effHide ? "🙈" : "👁"}
         </button>
         <button
           className="prof-refresh"

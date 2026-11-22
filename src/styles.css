@@ -276,6 +276,21 @@ a:hover { text-decoration: underline; }
 }
 .prof-refresh:hover { color: var(--amber); }
 .prof-refresh:disabled { opacity: 0.5; cursor: default; }
+.prof-hide { background: transparent; border: none; cursor: pointer; font-size: 14px; padding: 8px 6px; line-height: 1; opacity: 0.55; filter: grayscale(1); }
+.prof-hide:hover, .prof-hide.on { opacity: 1; filter: none; }
+.prof-jump-all { display: inline-flex; align-items: center; background: transparent; border: 1px dashed var(--line); color: var(--muted); border-radius: 20px; padding: 4px 11px; font-size: 12px; cursor: pointer; }
+.prof-jump-all:hover { color: var(--amber); border-color: var(--amber); }
+.backtotop {
+  position: fixed; right: 20px; bottom: 20px; z-index: 40;
+  display: inline-flex; align-items: center; gap: 9px;
+  background: var(--amber); color: #11141c; border: none; border-radius: 22px;
+  padding: 9px 15px; font-size: 13px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+}
+.backtotop:hover { filter: brightness(1.07); }
+.btt-prof { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btt-arrow { font: 600 12px var(--mono); background: rgba(0,0,0,0.15); padding: 1px 7px; border-radius: 12px; }
+@media (max-width: 560px) { .btt-prof { max-width: 96px; } .backtotop { right: 12px; bottom: 12px; } }
 .chev { color: var(--muted); width: 12px; }
 .profname { font-weight: 600; }
 .profmeta { color: var(--muted); font-size: 12px; }
