@@ -42,10 +42,13 @@ export function categoryOf(tag: string): GearCategory | null {
   if (!tag) return null;
   if (/(^| )Tool$/.test(tag)) return "tool";
   if (tag === "Weapon") return "weapon";
-  if (tag === "Metal Armor" || tag === "Dungeon Equipment") return "armor";
+  // Body armor comes as metal armor and leather/cloth clothing (all have armor stats).
+  if (tag === "Metal Armor" || tag === "Dungeon Equipment" || /(Leather|Cloth) Clothing$/.test(tag))
+    return "armor";
   if (/Charm$/.test(tag)) return "charm";
   if (/Instrument$/.test(tag)) return "instrument";
-  if (tag === "Trinket") return "trinket";
+  // Artifact slots: trinkets, jewelry (rings/amulets) and automata hearts.
+  if (tag === "Trinket" || tag === "Jewelry" || /Heart$/.test(tag)) return "trinket";
   if (/Cosmetic/.test(tag)) return "cosmetic";
   return null;
 }

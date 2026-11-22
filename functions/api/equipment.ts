@@ -52,13 +52,13 @@ function extractItem(
   const typeStr = String(pick(it, ["item_type", "type", "itemType"]) ?? pick(el, ["item_type", "type"]) ?? "Item").toLowerCase();
   const kind = typeStr.startsWith("cargo") ? "c" : "i";
   const slot = String(
-    pick(el, ["slot", "slotName", "slot_name", "slotType", "slot_type", "equipmentSlot", "name"]) ??
+    pick(el, ["primary", "slot", "slotName", "slot_name", "slotType", "slot_type", "equipmentSlot", "name"]) ??
       slotKey ??
       ""
   );
   const tierRaw = pick(it, ["tier", "level", "itemTier"]);
   const tier = tierRaw == null ? null : Number(tierRaw);
-  const rarity = pick(it, ["rarity", "rarityStr", "quality"]);
+  const rarity = pick(it, ["rarityString", "rarityStr", "rarity_string", "quality", "rarity"]);
   const name = pick(it, ["name", "itemName", "displayName"]);
   return {
     slot,
@@ -91,7 +91,7 @@ function itemsFromCollection(coll: any): ReturnType<typeof extractItem>[] {
 function collectionOf(node: any): any {
   if (Array.isArray(node)) return node;
   return (
-    pick(node, ["equipment", "equipped", "slots", "gear", "items", "loadout"]) ?? node
+    pick(node, ["equipmentSlots", "equipment", "equipped", "slots", "gear", "items", "loadout"]) ?? node
   );
 }
 
@@ -101,7 +101,7 @@ function findPresets(data: any): { name: string; coll: any }[] {
   const p = pick(data, ["presets", "equipmentPresets", "equipment_presets", "loadouts"]);
   if (Array.isArray(p) && p.length) {
     return p.map((pre, i) => ({
-      name: String(pick(pre, ["name", "presetName", "label", "title"]) ?? `Preset ${i + 1}`),
+      name: String(pick(pre, ["name", "presetName", "label", "title"]) ?? `Preset ${pre?.index ?? i + 1}`),
       coll: collectionOf(pre),
     }));
   }
@@ -146,12 +146,11 @@ export async function onRequestGet(context: any): Promise<Response> {
 
   if (sourceData == null) return json({ error: "upstream error or no data" }, 502);
 
-  const presets = findPresets(sourceData)
-    .map((pr) => ({
-      name: pr.name,
-      items: itemsFromCollection(pr.coll).filter((x): x is NonNullable<typeof x> => x != null),
-    }))
-    .filter((pr) => pr.items.length > 0);
+  // Keep every preset (even empty ones) so the UI's preset tabs match the game.
+  const presets = findPresets(sourceData).map((pr) => ({
+    name: pr.name,
+    items: itemsFromCollection(pr.coll).filter((x): x is NonNullable<typeof x> => x != null),
+  }));
 
   const count = presets.reduce((s, p) => s + p.items.length, 0);
   // `items` kept for backward-compat: the first preset's items.
