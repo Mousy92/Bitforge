@@ -20,8 +20,9 @@ import { UpgradeTab } from "./components/UpgradeTab";
 import { GearTab } from "./components/GearTab";
 import { CalcTab } from "./components/CalcTab";
 import { QuickTab } from "./components/QuickTab";
+import { GatherTab } from "./components/GatherTab";
 
-type Tab = "planner" | "quick" | "cooking" | "upgrade" | "gear" | "calc";
+type Tab = "planner" | "quick" | "cooking" | "upgrade" | "gear" | "calc" | "gather";
 
 export default function App() {
   const [data, setData] = useState<GameData | null>(null);
@@ -249,8 +250,10 @@ export default function App() {
         <UpgradeTab data={data} storage={useStorage ? storage : null} onRefresh={refreshStorage} />
       ) : tab === "gear" ? (
         <GearTab data={data} storage={useStorage ? storage : null} onRefresh={refreshStorage} />
-      ) : (
+      ) : tab === "calc" ? (
         <CalcTab data={data} />
+      ) : (
+        <GatherTab data={data} />
       )}
 
       <Footer data={data} />
@@ -294,6 +297,9 @@ function Header({
         </button>
         <button className={tab === "calc" ? "tab active" : "tab"} onClick={() => setTab("calc")}>
           Approx Calc
+        </button>
+        <button className={tab === "gather" ? "tab active" : "tab"} onClick={() => setTab("gather")}>
+          Gathering
         </button>
       </nav>
       {data && <span className="data-ver">data {data.sourceCommit}</span>}

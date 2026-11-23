@@ -69,6 +69,8 @@ export interface GameData {
   aliasMap?: Record<string, string>;
   /** RNG drop rates: itemKey -> sources, each { chance 0-1, qty, source name } */
   drops?: Record<string, { chance: number; qty: number; source: string }[]>;
+  /** Gatherable resource nodes: name, tier, tag, HP, respawn seconds. */
+  nodes?: { n: string; t: number; tag: string; hp: number; rs: number }[];
 }
 
 /** A key like "i1010001" or "c150000" identifying an item/cargo across namespaces. */

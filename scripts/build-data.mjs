@@ -67,6 +67,7 @@ const craftingRecipes = load("crafting_recipe_desc");
 const buildingTypes = load("building_type_desc");
 const itemListDesc = load("item_list_desc");
 const extractionRecipes = load("extraction_recipe_desc");
+const resourceDesc = load("resource_desc");
 const foodDesc = load("food_desc");
 const buffDesc = load("buff_desc");
 
@@ -520,10 +521,26 @@ for (const key of Object.keys(recipes)) {
   else delete recipes[key];
 }
 
+// ---- gathering nodes (for the swing/timer calculator) -----------------------
+// Resource nodes with HP, tier, tag and respawn time, so you can pull a node's
+// health and work out swings/time to break it.
+const SKIP_NODE_TAG = /Dungeon|Obstacle|Building|Deployable|Portal/i;
+const nodes = resourceDesc
+  .filter((r) => r.max_health > 0 && r.name && !SKIP_NODE_TAG.test(r.tag || ""))
+  .map((r) => ({
+    n: r.name,
+    t: r.tier ?? -1,
+    tag: r.tag || "",
+    hp: r.max_health,
+    rs: r.scheduled_respawn_time || 0,
+  }))
+  .sort((a, b) => a.tag.localeCompare(b.tag) || a.t - b.t || a.n.localeCompare(b.n));
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),
   foods,
+  nodes,
   skills,
   buildingTypes: buildingTypeName,
   items,
