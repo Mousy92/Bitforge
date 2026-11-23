@@ -309,6 +309,11 @@ a:hover { text-decoration: underline; }
 .m-expand { background: none; border: none; color: inherit; font: inherit; cursor: pointer; padding: 0; display: inline-flex; align-items: center; gap: 6px; text-align: left; }
 .m-expand:hover { color: var(--amber); }
 .m-expand-chev { font-size: 10px; color: var(--muted); width: 10px; }
+.treeroot-list { list-style: none; margin: 0; padding: 0; border: none; }
+.treeroot-list > .tree-root { margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.tree-root > .prereq-row { padding: 7px 6px; }
+.tree-root > .prereq-row .prereq-name b { font-size: 14px; }
+.tree-root > .prereq-row .prereq-toggle.dim { color: var(--amber); }
 .prereq { list-style: none; margin: 2px 0 6px; padding: 0 0 0 30px; border-left: 1px solid var(--line); margin-left: 24px; }
 .prereq-node { padding: 0; }
 .prereq-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; }

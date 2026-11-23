@@ -64,6 +64,19 @@ export function QuickTab({
   }
 
   const plan = useMemo(() => planBuild(data, build, chosen), [data, build, chosen]);
+  // Recipe-tree roots: item targets directly; building targets expanded to their mats.
+  const roots = useMemo(() => {
+    const out: { key: ItemKey; qty: number }[] = [];
+    for (const t of build.targets) {
+      if (t.q <= 0) continue;
+      if (t.t === "i") out.push({ key: t.k, qty: t.q });
+      else {
+        const b = data.buildings.find((x) => x.id === t.id);
+        if (b) for (const [k, id, q] of b.recipe.mats) out.push({ key: `${k}${id}`, qty: q * t.q });
+      }
+    }
+    return out;
+  }, [build.targets, data]);
   const buildSig = useMemo(
     () => "scratch:" + build.targets.map((t) => targetId(t) + ":" + t.q).sort().join("|"),
     [build.targets]
@@ -134,6 +147,8 @@ export function QuickTab({
             overrides={overrides}
             onOverride={setOverride}
             onRefresh={onRefresh}
+            roots={roots}
+            treeDefault
           />
         )}
       </section>

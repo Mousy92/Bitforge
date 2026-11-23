@@ -9,7 +9,7 @@ import {
 } from "../data";
 import type { Plan, PlanLine } from "../engine";
 
-type View = "profession" | "raw" | "flat";
+type View = "profession" | "raw" | "flat" | "tree";
 type Progress = Record<ItemKey, number>;
 
 const PROG_PREFIX = "bitforge:prog:";
@@ -24,6 +24,8 @@ export function PlanView({
   overrides,
   onOverride,
   onRefresh,
+  roots,
+  treeDefault,
 }: {
   data: GameData;
   plan: Plan;
@@ -34,8 +36,11 @@ export function PlanView({
   overrides: Record<ItemKey, number>;
   onOverride: (key: ItemKey, n: number | null) => void;
   onRefresh: () => void;
+  /** Top-level items (recipe-tree roots). When set, a "Recipe tree" view is offered. */
+  roots?: { key: ItemKey; qty: number }[];
+  treeDefault?: boolean;
 }) {
-  const [view, setView] = useState<View>("profession");
+  const [view, setView] = useState<View>(treeDefault && roots && roots.length ? "tree" : "profession");
   const [progress, setProgress] = useState<Progress>({});
   const [filter, setFilter] = useState("");
   const [hideDone, setHideDone] = useState<boolean>(() => {
@@ -180,6 +185,11 @@ export function PlanView({
       )}
 
       <div className="viewtabs">
+        {roots && roots.length > 0 && (
+          <button className={view === "tree" ? "on" : ""} onClick={() => setView("tree")}>
+            Recipe tree
+          </button>
+        )}
         <button className={view === "profession" ? "on" : ""} onClick={() => setView("profession")}>
           By profession
         </button>
@@ -309,6 +319,14 @@ export function PlanView({
           filter={filter}
           hideDone={hideDone}
         />
+      )}
+
+      {view === "tree" && roots && (
+        <ul className="prereq treeroot-list">
+          {roots.map((r, i) => (
+            <TreeRoot key={i + ":" + r.key} data={data} rootKey={r.key} qty={r.qty} chosen={chosen} />
+          ))}
+        </ul>
       )}
 
       {scrolled && (
@@ -575,6 +593,38 @@ function MatRow({
 }
 
 /** The direct ingredients needed to craft `qty` of `keyId`, each expandable further. */
+/** A top-level recipe-tree root: the item itself, with its direct ingredients shown. */
+function TreeRoot({
+  data,
+  rootKey,
+  qty,
+  chosen,
+}: {
+  data: GameData;
+  rootKey: ItemKey;
+  qty: number;
+  chosen: Record<ItemKey, number>;
+}) {
+  const rk = resolveKey(data, rootKey);
+  const it = data.items[rk];
+  const prof = professionFor(data, rk, chosen);
+  const craftable = recipesFor(data, rk).length > 0;
+  return (
+    <li className="prereq-node tree-root">
+      <div className="prereq-row">
+        <span className="prereq-toggle dim">◆</span>
+        <span className="prereq-qty">{qty.toLocaleString()}</span>
+        <span className="prereq-name">
+          <b>{it?.n ?? rk}</b>
+          {it && it.t > 0 && <span className="m-tier">T{it.t}</span>}
+          <span className="prereq-prof">{prof}</span>
+        </span>
+      </div>
+      {craftable && <Prereqs data={data} keyId={rk} qty={qty} chosen={chosen} depth={0} path={new Set()} />}
+    </li>
+  );
+}
+
 function Prereqs({
   data,
   keyId,
