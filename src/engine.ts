@@ -23,6 +23,8 @@ export interface PlanLine {
   /** building type where it's crafted (craftables only), for the "craft at" hint */
   craftAt?: string;
   level?: number; // skill level required (craftables)
+  /** processing depth: 0 = raw/gathered, 1 = made from raw, 2 = double-processed, … */
+  depth: number;
 }
 
 export interface BuildLine {
@@ -131,6 +133,26 @@ export function planBuild(
     }
   }
 
+  // Processing depth: 0 = raw (no recipe), else 1 + the deepest ingredient.
+  const depthMemo = new Map<ItemKey, number>();
+  function depthOf(key: ItemKey, path: Set<ItemKey>): number {
+    const rk = resolveKey(data, key);
+    const recs = recipesFor(data, rk);
+    if (!recs.length) return 0;
+    const cached = depthMemo.get(rk);
+    if (cached !== undefined) return cached;
+    if (path.has(rk)) return 1; // cycle guard
+    const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
+    const r = recs[idx];
+    const nextPath = new Set(path);
+    nextPath.add(rk);
+    let max = 0;
+    for (const [k, id] of r.mats) max = Math.max(max, depthOf(`${k}${id}`, nextPath));
+    const d = 1 + max;
+    depthMemo.set(rk, d);
+    return d;
+  }
+
   // Build output lines.
   const lines: PlanLine[] = [];
   for (const [key, qty] of totals) {
@@ -149,6 +171,7 @@ export function planBuild(
       craftable,
       craftAt: r ? buildingTypeLabel(data, r.bt) : undefined,
       level: r?.lv,
+      depth: depthOf(key, new Set()),
     });
   }
 

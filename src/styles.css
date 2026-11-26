@@ -339,6 +339,12 @@ input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .m-name { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .m-tier { font: 10.5px var(--mono); color: var(--blue); background: #1b2a3d; padding: 1px 5px; border-radius: 5px; }
+.m-depth { font: 10px var(--mono); padding: 1px 5px; border-radius: 5px; letter-spacing: .02em; }
+.m-depth.d0 { color: #8fe0ad; background: #16271d; }
+.m-depth.d1 { color: #8fb9e0; background: #16222f; }
+.m-depth.d2 { color: var(--amber); background: #2a2113; }
+.m-depth.d3 { color: #e0a06f; background: #2d1e12; }
+.m-depth.d4 { color: #e08f8f; background: #2d1616; }
 .m-prof { font-size: 11px; color: var(--muted); }
 .m-at { font-size: 11.5px; color: #8fb08a; }
 .m-recipe { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font-size: 11.5px; padding: 2px 4px; max-width: 220px; }

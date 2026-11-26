@@ -9,10 +9,29 @@ import {
 } from "../data";
 import type { Plan, PlanLine } from "../engine";
 
-type View = "profession" | "raw" | "flat" | "tree";
+type View = "profession" | "raw" | "flat" | "tree" | "step";
 type Progress = Record<ItemKey, number>;
 
 const PROG_PREFIX = "bitforge:prog:";
+
+// Processing-depth labels: 0 = gathered, 1 = made from raw, etc.
+function depthLabel(d: number): string {
+  return (
+    ["Raw / gathered", "Single-processed", "Double-processed", "Triple-processed"][d] ??
+    `${d}× processed`
+  );
+}
+function depthBadge(d: number): string {
+  return d === 0 ? "raw" : `×${d}`;
+}
+function groupByDepth(lines: PlanLine[]): Map<number, PlanLine[]> {
+  const m = new Map<number, PlanLine[]>();
+  for (const l of lines) {
+    if (!m.has(l.depth)) m.set(l.depth, []);
+    m.get(l.depth)!.push(l);
+  }
+  return m;
+}
 
 export function PlanView({
   data,
@@ -196,6 +215,9 @@ export function PlanView({
         <button className={view === "raw" ? "on" : ""} onClick={() => setView("raw")}>
           Raw materials ({rawCount})
         </button>
+        <button className={view === "step" ? "on" : ""} onClick={() => setView("step")}>
+          By step
+        </button>
         <button className={view === "flat" ? "on" : ""} onClick={() => setView("flat")}>
           Everything
         </button>
@@ -320,6 +342,29 @@ export function PlanView({
           hideDone={hideDone}
         />
       )}
+
+      {view === "step" &&
+        [...groupByDepth(plan.lines).entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([d, ls]) => (
+            <ProfessionBlock
+              key={"step" + d}
+              data={data}
+              title={depthLabel(d)}
+              lines={ls}
+              progress={progress}
+              onHave={setHave}
+              chosen={chosen}
+              onChoose={onChoose}
+              flatProf
+              storage={storage}
+              overrides={overrides}
+              onOverride={onOverride}
+              onRefresh={onRefresh}
+              filter={filter}
+              hideDone={hideDone}
+            />
+          ))}
 
       {view === "tree" && roots && (
         <ul className="prereq treeroot-list">
@@ -546,6 +591,12 @@ function MatRow({
             l.name
           )}
           {l.tier > 0 && <span className="m-tier">T{l.tier}</span>}
+          <span
+            className={`m-depth d${Math.min(l.depth, 4)}`}
+            title={depthLabel(l.depth)}
+          >
+            {depthBadge(l.depth)}
+          </span>
           {flatProf && <span className="m-prof">{l.profession}</span>}
           {l.craftable && l.craftAt && (
             <span className="m-at" title="Crafting station">
