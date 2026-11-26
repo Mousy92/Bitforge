@@ -64,6 +64,49 @@ export function GatherTab({ data }: { data: GameData }) {
   const [swing, setSwing] = useState("1.6");
   const [timers, setTimers] = useState<Timer[]>([{ id: uid(), label: "", hp: "12000" }]);
   const [q, setQ] = useState("");
+  const [startNonce, setStartNonce] = useState(0);
+  const [resetNonce, setResetNonce] = useState(0);
+
+  // Tab-title flash + optional notification when a timer finishes.
+  const origTitle = useRef<string>(typeof document !== "undefined" ? document.title : "");
+  const flashRef = useRef<number | null>(null);
+  function stopFlash() {
+    if (flashRef.current) {
+      clearInterval(flashRef.current);
+      flashRef.current = null;
+      document.title = origTitle.current;
+    }
+  }
+  useEffect(() => {
+    window.addEventListener("focus", stopFlash);
+    return () => {
+      window.removeEventListener("focus", stopFlash);
+      stopFlash();
+    };
+  }, []);
+  function notifyDone(label: string) {
+    const name = label || "Node";
+    try {
+      if ("Notification" in window && Notification.permission === "granted")
+        new Notification("BitForge — timer done", { body: `${name} is ready.` });
+    } catch {
+      /* ignore */
+    }
+    if (!document.hasFocus() && !flashRef.current) {
+      let on = false;
+      flashRef.current = window.setInterval(() => {
+        on = !on;
+        document.title = on ? "⏰ Timer done!" : origTitle.current;
+      }, 900);
+    }
+  }
+  function askNotify() {
+    try {
+      if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Load persisted swing + timers.
   useEffect(() => {
@@ -172,6 +215,23 @@ export function GatherTab({ data }: { data: GameData }) {
           )}
         </div>
 
+        {timers.length > 1 && (
+          <div className="timer-bulk">
+            <button
+              className="btn primary small"
+              onClick={() => {
+                askNotify();
+                setStartNonce((n) => n + 1);
+              }}
+            >
+              ▶ Start all
+            </button>
+            <button className="btn ghost small" onClick={() => setResetNonce((n) => n + 1)}>
+              ↺ Reset all
+            </button>
+          </div>
+        )}
+
         <div className="timer-grid">
           {timers.map((t) => (
             <TimerCard
@@ -179,8 +239,12 @@ export function GatherTab({ data }: { data: GameData }) {
               timer={t}
               dmg={D}
               swing={S}
+              startNonce={startNonce}
+              resetNonce={resetNonce}
               onChange={(patch) => updateTimer(t.id, patch)}
               onRemove={() => removeTimer(t.id)}
+              onStart={askNotify}
+              onFinish={notifyDone}
             />
           ))}
           <button className="timer-add" onClick={() => addTimer()}>
@@ -202,24 +266,35 @@ function TimerCard({
   timer,
   dmg,
   swing,
+  startNonce,
+  resetNonce,
   onChange,
   onRemove,
+  onStart,
+  onFinish,
 }: {
   timer: Timer;
   dmg: number;
   swing: number;
+  startNonce: number;
+  resetNonce: number;
   onChange: (patch: Partial<Timer>) => void;
   onRemove: () => void;
+  onStart: () => void;
+  onFinish: (label: string) => void;
 }) {
   const H = num(timer.hp);
   const swings = dmg > 0 ? Math.ceil(H / dmg) : 0;
   const breakDur = swings * swing;
   const mode = timer.mode ?? "break";
   const duration = mode === "respawn" && timer.respawn ? timer.respawn : breakDur;
+  const canRun = duration > 0;
 
   const [remaining, setRemaining] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const endRef = useRef(0);
+  const finishRef = useRef(onFinish);
+  finishRef.current = onFinish;
   useEffect(() => {
     if (!running) return;
     const id = setInterval(() => {
@@ -228,17 +303,31 @@ function TimerCard({
         setRemaining(0);
         setRunning(false);
         beep();
+        finishRef.current(timer.label);
       } else setRemaining(left);
     }, 100);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, timer.label]);
   function start() {
+    if (!canRun) return;
+    onStart();
     endRef.current = Date.now() + duration * 1000;
     setRemaining(duration);
     setRunning(true);
   }
-
-  const canRun = duration > 0;
+  function reset() {
+    setRunning(false);
+    setRemaining(null);
+  }
+  // Respond to "Start all" / "Reset all" (skip the initial 0 value).
+  useEffect(() => {
+    if (startNonce > 0) start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startNonce]);
+  useEffect(() => {
+    if (resetNonce > 0) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetNonce]);
   return (
     <div className={`timer-card${remaining === 0 ? " done" : ""}${running ? " running" : ""}`}>
       <div className="tc-head">
@@ -289,13 +378,7 @@ function TimerCard({
             Pause
           </button>
         )}
-        <button
-          className="btn ghost small"
-          onClick={() => {
-            setRunning(false);
-            setRemaining(null);
-          }}
-        >
+        <button className="btn ghost small" onClick={reset}>
           Reset
         </button>
       </div>

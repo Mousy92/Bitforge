@@ -492,7 +492,8 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .gather-inputs { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
 .gather-inputs label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
 .gather-inputs .calc-in { width: 120px; font: 600 14px var(--mono); text-align: right; }
-.timer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
+.timer-bulk { display: flex; gap: 8px; margin-top: 16px; }
+.timer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
 .timer-card { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
 .timer-card.running { border-color: var(--green); }
 .timer-card.done { border-color: var(--amber); }
