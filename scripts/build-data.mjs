@@ -536,6 +536,21 @@ const nodes = resourceDesc
   }))
   .sort((a, b) => a.tag.localeCompare(b.tag) || a.t - b.t || a.n.localeCompare(b.n));
 
+// Alias "X Package" cargo -> craftable "X" item. Done last, after the packaging
+// strip has removed the package's own unpack recipe, so a packaged item resolves
+// to its components instead of dead-ending as a leaf.
+let pkgAliased = 0;
+for (const [key, it] of Object.entries(items)) {
+  if ((recipes[key] && recipes[key].length) || aliasMap[key]) continue;
+  if (!(it.tag === "Package" || / Package$/.test(it.n))) continue;
+  const base = it.n.replace(/ Package$/, "");
+  const twin = craftableByName[base];
+  if (twin && twin !== key) {
+    aliasMap[key] = twin;
+    pkgAliased++;
+  }
+}
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),

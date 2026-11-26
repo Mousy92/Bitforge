@@ -64,6 +64,9 @@ export function Picker({ data, onAdd }: { data: GameData; onAdd: (t: Target) => 
       });
     }
     for (const [key, it] of Object.entries(data.items)) {
+      // Skip bundled "Package" cargo twins — they're packaging duplicates of a
+      // craftable item and dead-end; users should add the real item.
+      if (it.tag === "Package") continue;
       rows.push({
         kind: "item",
         label: it.n,

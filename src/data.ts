@@ -133,14 +133,25 @@ export function buildingTypeName(data: GameData, id: number): string {
   return data.buildingTypes[String(id)] || "";
 }
 
+/** Recipes for a key, falling back to its canonical craftable twin (e.g. a
+ *  packaged cargo form) via the aliasMap when the key itself has none. */
+function recipesRaw(data: GameData, key: ItemKey): RecipeRaw[] {
+  const rk = resolveKey(data, key);
+  const direct = data.recipes[rk];
+  if (direct && direct.length) return direct;
+  const alias = data.aliasMap?.[rk] ?? data.aliasMap?.[key];
+  if (alias && data.recipes[alias]?.length) return data.recipes[alias];
+  return [];
+}
+
 /** The first (primary) crafting recipe for an item, if any. */
 export function recipeFor(data: GameData, key: ItemKey): RecipeRaw | undefined {
-  const recs = data.recipes[resolveKey(data, key)];
-  return recs && recs.length ? recs[0] : undefined;
+  const recs = recipesRaw(data, key);
+  return recs.length ? recs[0] : undefined;
 }
 
 export function recipesFor(data: GameData, key: ItemKey): RecipeRaw[] {
-  return data.recipes[resolveKey(data, key)] || [];
+  return recipesRaw(data, key);
 }
 
 /**

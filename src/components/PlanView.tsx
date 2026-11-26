@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import {
   type GameData,
   type ItemKey,
+  canonKey,
   itemName,
   professionFor,
   recipesFor,
-  resolveKey,
 } from "../data";
 import type { Plan, PlanLine } from "../engine";
 
@@ -605,7 +605,7 @@ function TreeRoot({
   qty: number;
   chosen: Record<ItemKey, number>;
 }) {
-  const rk = resolveKey(data, rootKey);
+  const rk = canonKey(data, rootKey);
   const it = data.items[rk];
   const prof = professionFor(data, rk, chosen);
   const craftable = recipesFor(data, rk).length > 0;
@@ -640,7 +640,7 @@ function Prereqs({
   depth: number;
   path: Set<ItemKey>;
 }) {
-  const rk = resolveKey(data, keyId);
+  const rk = canonKey(data, keyId);
   const recs = recipesFor(data, rk);
   if (!recs.length) return null;
   const idx = Math.min(chosen[rk] ?? 0, recs.length - 1);
@@ -681,7 +681,7 @@ function PrereqNode({
   path: Set<ItemKey>;
 }) {
   const [open, setOpen] = useState(false);
-  const rk = resolveKey(data, keyId);
+  const rk = canonKey(data, keyId);
   const it = data.items[rk];
   const recs = recipesFor(data, rk);
   // A node is a dead end for the tree if it's raw, already on the path (cycle), or too deep.
