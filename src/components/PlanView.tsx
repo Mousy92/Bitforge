@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   type GameData,
   type ItemKey,
@@ -13,6 +13,9 @@ type View = "profession" | "raw" | "flat" | "tree" | "step";
 type Progress = Record<ItemKey, number>;
 
 const PROG_PREFIX = "bitforge:prog:";
+
+/** Keys whose total requirement is met — struck through in rows and sub-lists. */
+const DoneContext = createContext<Set<ItemKey>>(new Set());
 
 // Processing-depth labels: 0 = gathered, 1 = made from raw, etc.
 function depthLabel(d: number): string {
@@ -147,6 +150,13 @@ export function PlanView({
     overrides[l.key] !== undefined ? overrides[l.key] : (progress[l.key] || 0) + storedAt(l.key);
   const doneLines = plan.lines.filter((l) => effHaveTop(l) >= l.qty).length;
   const itemPct = plan.lines.length ? Math.round((doneLines / plan.lines.length) * 100) : 0;
+  // Keys whose total requirement is met — struck through everywhere (rows + sub-lists).
+  const doneKeys = useMemo(() => {
+    const s = new Set<ItemKey>();
+    for (const l of plan.lines) if (effHaveTop(l) >= l.qty) s.add(canonKey(data, l.key));
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.lines, progress, overrides, storage, data]);
   const totalUnits = plan.lines.reduce((s, l) => s + l.qty, 0);
   const haveUnits = plan.lines.reduce((s, l) => s + Math.min(effHaveTop(l), l.qty), 0);
   const unitPct = totalUnits ? Math.round((haveUnits / totalUnits) * 100) : 0;
@@ -157,6 +167,7 @@ export function PlanView({
   }
 
   return (
+    <DoneContext.Provider value={doneKeys}>
     <div className="plan">
       <div className="panel-head">
         <h2>Materials needed</h2>
@@ -385,6 +396,7 @@ export function PlanView({
         </button>
       )}
     </div>
+    </DoneContext.Provider>
   );
 }
 
@@ -656,12 +668,13 @@ function TreeRoot({
   qty: number;
   chosen: Record<ItemKey, number>;
 }) {
+  const done = useContext(DoneContext);
   const rk = canonKey(data, rootKey);
   const it = data.items[rk];
   const prof = professionFor(data, rk, chosen);
   const craftable = recipesFor(data, rk).length > 0;
   return (
-    <li className="prereq-node tree-root">
+    <li className={done.has(rk) ? "prereq-node tree-root done" : "prereq-node tree-root"}>
       <div className="prereq-row">
         <span className="prereq-toggle dim">◆</span>
         <span className="prereq-qty">{qty.toLocaleString()}</span>
@@ -732,14 +745,16 @@ function PrereqNode({
   path: Set<ItemKey>;
 }) {
   const [open, setOpen] = useState(false);
+  const done = useContext(DoneContext);
   const rk = canonKey(data, keyId);
   const it = data.items[rk];
   const recs = recipesFor(data, rk);
   // A node is a dead end for the tree if it's raw, already on the path (cycle), or too deep.
   const expandable = recs.length > 0 && !path.has(rk) && depth < 40;
   const prof = professionFor(data, rk, chosen);
+  const isDone = done.has(rk);
   return (
-    <li className="prereq-node">
+    <li className={isDone ? "prereq-node done" : "prereq-node"}>
       <div className="prereq-row">
         {expandable ? (
           <button className="prereq-toggle" onClick={() => setOpen((o) => !o)} title="Show its ingredients">
