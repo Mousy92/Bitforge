@@ -145,7 +145,7 @@ const RAW_BYPRODUCT_TAGS = new Set([
 // Keyword -> gathering profession, for raw materials that no recipe produces.
 // Best-effort; anything unmatched falls into the "Raw / Gathered" bucket in the UI.
 const GATHER_RULES = [
-  [/log|wood|timber|stick|bark|sap|branch|plank|lumber/i, "Forestry"],
+  [/log|wood|timber|stick|bark|sap|branch|plank|lumber|trunk/i, "Forestry"],
   [/ore|stone|rock|boulder|clay|salt|coal|flint|gem|crystal|sand|ingot|metal/i, "Mining"],
   [/fiber|plant|flower|blossom|herb|berry|mushroom|moss|root|leaf|reed|cotton|nut|seed/i, "Foraging"],
   [/hide|pelt|leather|meat|bone|carcass|fur|animal|feather/i, "Hunting"],
