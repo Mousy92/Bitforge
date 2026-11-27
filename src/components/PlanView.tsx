@@ -263,7 +263,9 @@ export function PlanView({
           <span className="prof-jump-label">Jump to:</span>
           {plan.byProfession.map((g, i) => {
             const done = g.lines.filter((l) => effHaveTop(l) >= l.qty).length;
-            const pct = g.lines.length ? Math.round((done / g.lines.length) * 100) : 0;
+            const haveU = g.lines.reduce((s, l) => s + Math.min(effHaveTop(l), l.qty), 0);
+            const totalU = g.lines.reduce((s, l) => s + l.qty, 0);
+            const pct = totalU ? Math.round((haveU / totalU) * 100) : 0;
             if (hideDone && done >= g.lines.length) return null;
             return (
               <button
@@ -466,7 +468,11 @@ function ProfessionBlock({
   if ((term || effHide) && shown.length === 0) return null;
   const isOpen = term ? true : openState;
   const done = lines.filter((l) => effHave(l) >= l.qty).length;
-  const pct = lines.length ? Math.round((done / lines.length) * 100) : 0;
+  // Unit-weighted progress, so partial amounts (storage/tracked) show up — not
+  // just fully-finished lines.
+  const haveU = lines.reduce((s, l) => s + Math.min(effHave(l), l.qty), 0);
+  const totalU = lines.reduce((s, l) => s + l.qty, 0);
+  const pct = totalU ? Math.round((haveU / totalU) * 100) : 0;
 
   async function refresh() {
     setRefreshing(true);
