@@ -50,9 +50,14 @@ function beep() {
 interface Timer {
   id: string;
   label: string;
-  hp: string;
+  kind: "active" | "passive";
+  // active (node gathering)
+  hp?: string;
   respawn?: number; // seconds, if pulled from a node
   mode?: "break" | "respawn"; // which duration the timer counts
+  // passive (processes over time, e.g. bricks firing)
+  qty?: string;
+  per?: number; // seconds per unit
 }
 const uid = () => Math.random().toString(36).slice(2, 9);
 const SWING_LS = "bitforge:gswing";
@@ -62,8 +67,9 @@ export function GatherTab({ data }: { data: GameData }) {
   const nodes = data.nodes ?? [];
   const [dmg, setDmg] = useState("500");
   const [swing, setSwing] = useState("1.6");
-  const [timers, setTimers] = useState<Timer[]>([{ id: uid(), label: "", hp: "12000" }]);
+  const [timers, setTimers] = useState<Timer[]>([{ id: uid(), label: "", kind: "active", hp: "12000" }]);
   const [q, setQ] = useState("");
+  const [pq, setPq] = useState("");
   const [startNonce, setStartNonce] = useState(0);
   const [resetNonce, setResetNonce] = useState(0);
 
@@ -142,14 +148,23 @@ export function GatherTab({ data }: { data: GameData }) {
     }
   }
 
+  const passives = data.passives ?? [];
   const results = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return [];
     return nodes.filter((n) => n.n.toLowerCase().includes(term) || n.tag.toLowerCase().includes(term)).slice(0, 12);
   }, [q, nodes]);
+  const presults = useMemo(() => {
+    const term = pq.trim().toLowerCase();
+    if (!term) return [];
+    return passives.filter((p) => p.n.toLowerCase().includes(term)).slice(0, 12);
+  }, [pq, passives]);
 
   function addTimer(t?: Partial<Timer>) {
-    persistTimers([...timers, { id: uid(), label: t?.label ?? "", hp: t?.hp ?? "", respawn: t?.respawn, mode: "break" }]);
+    persistTimers([
+      ...timers,
+      { id: uid(), label: t?.label ?? "", kind: t?.kind ?? "active", hp: t?.hp ?? "", respawn: t?.respawn, mode: "break", qty: t?.qty, per: t?.per },
+    ]);
   }
   function updateTimer(id: string, patch: Partial<Timer>) {
     persistTimers(timers.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -168,9 +183,9 @@ export function GatherTab({ data }: { data: GameData }) {
           <h2>Gathering timers</h2>
         </div>
         <p className="hint">
-          Set your damage per swing and swing speed once, then add a timer for each node (pull its
-          HP or type it). Every timer runs on its own so you can track multiple nodes &amp; respawns
-          at the same time.
+          Two kinds of timers, running side by side: <b>active</b> gathering (node HP ÷ your swing)
+          and <b>passive</b> processes that cook over time (bricks, ingots, charcoal…). Add as many
+          as you like — pull a node's HP, or pick a passive process and set a quantity.
         </p>
 
         <div className="gather-inputs">
@@ -208,6 +223,35 @@ export function GatherTab({ data }: { data: GameData }) {
                     <span className="cl-rate">
                       {n.hp.toLocaleString()} HP{n.rs ? ` · respawn ${fmt(n.rs)}` : ""}
                     </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="calc-lookup" style={{ marginTop: 8 }}>
+          <input
+            className="search"
+            placeholder="⏳ Add a passive timer — process over time… (e.g. sturdy brick, ingot, charcoal)"
+            value={pq}
+            onChange={(e) => setPq(e.target.value)}
+          />
+          {presults.length > 0 && (
+            <ul className="calc-lookup-results">
+              {presults.map((p, i) => (
+                <li key={i}>
+                  <button
+                    onClick={() => {
+                      addTimer({ kind: "passive", label: p.n, per: p.per, qty: "10" });
+                      setPq("");
+                    }}
+                  >
+                    <span className="cl-name">
+                      {p.n}
+                      {p.t > 0 && <span className="m-tier">T{p.t}</span>}
+                    </span>
+                    <span className="cl-rate">{fmt(p.per)} / unit</span>
                   </button>
                 </li>
               ))}
@@ -253,9 +297,10 @@ export function GatherTab({ data }: { data: GameData }) {
         </div>
 
         <p className="calc-note">
-          Break time = node HP ÷ your damage (rounded up) × swing speed. It assumes steady swings and
-          doesn't model crits, tool tier or gathering buffs. A node's <b>respawn</b> timer (when
-          pulled) counts down how long until it's back — switch a timer to it with the ⟳ toggle.
+          <b>Active:</b> break time = node HP ÷ your damage (rounded up) × swing speed (steady swings;
+          no crits / tool tier / buffs). A node's <b>respawn</b> timer (when pulled) counts how long
+          until it's back — switch with the ⟳ toggle. <b>Passive:</b> total = quantity × the process's
+          per-unit time (one station, in series).
         </p>
       </div>
     </main>
@@ -283,11 +328,18 @@ function TimerCard({
   onStart: () => void;
   onFinish: (label: string) => void;
 }) {
-  const H = num(timer.hp);
+  const passive = timer.kind === "passive";
+  const qty = num(timer.qty ?? "");
+  const per = timer.per ?? 0;
+  const H = num(timer.hp ?? "");
   const swings = dmg > 0 ? Math.ceil(H / dmg) : 0;
   const breakDur = swings * swing;
   const mode = timer.mode ?? "break";
-  const duration = mode === "respawn" && timer.respawn ? timer.respawn : breakDur;
+  const duration = passive
+    ? qty * per
+    : mode === "respawn" && timer.respawn
+      ? timer.respawn
+      : breakDur;
   const canRun = duration > 0;
 
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -342,22 +394,35 @@ function TimerCard({
         </button>
       </div>
       <div className="tc-inputs">
-        <label>
-          <span>HP</span>
-          <input className="calc-in" inputMode="numeric" value={timer.hp} onChange={(e) => onChange({ hp: e.target.value })} />
-        </label>
-        {timer.respawn ? (
-          <button
-            className="tc-mode"
-            onClick={() => onChange({ mode: mode === "break" ? "respawn" : "break" })}
-            title="Switch between break time and respawn time"
-          >
-            ⟳ {mode === "break" ? "break" : "respawn"}
-          </button>
-        ) : null}
+        {passive ? (
+          <label>
+            <span>Quantity</span>
+            <input className="calc-in" inputMode="numeric" value={timer.qty ?? ""} onChange={(e) => onChange({ qty: e.target.value })} />
+          </label>
+        ) : (
+          <>
+            <label>
+              <span>HP</span>
+              <input className="calc-in" inputMode="numeric" value={timer.hp ?? ""} onChange={(e) => onChange({ hp: e.target.value })} />
+            </label>
+            {timer.respawn ? (
+              <button
+                className="tc-mode"
+                onClick={() => onChange({ mode: mode === "break" ? "respawn" : "break" })}
+                title="Switch between break time and respawn time"
+              >
+                ⟳ {mode === "break" ? "break" : "respawn"}
+              </button>
+            ) : null}
+          </>
+        )}
       </div>
       <div className="tc-meta">
-        {mode === "break" ? (
+        {passive ? (
+          <>
+            {qty.toLocaleString()} × {fmt(per)} · {canRun ? fmt(duration) : "—"}
+          </>
+        ) : mode === "break" ? (
           <>
             {dmg > 0 ? swings.toLocaleString() : "—"} swings · {canRun ? fmt(breakDur) : "—"}
           </>

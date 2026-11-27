@@ -551,11 +551,29 @@ for (const [key, it] of Object.entries(items)) {
   }
 }
 
+// ---- passive processes (for the passive timers) ----------------------------
+// Passive crafts (bricks firing, ingots smelting, …) complete over time without
+// active input. Record the per-unit time so a timer can count a batch down.
+const passives = [];
+const seenPassive = new Set();
+for (const r of craftingRecipes) {
+  if (!r.is_passive || !(r.time_requirement > 0)) continue;
+  const o = (r.crafted_item_stacks || [])[0];
+  if (!o) continue;
+  const key = `i${o.item_id}`;
+  const it = items[key];
+  if (!it || seenPassive.has(key)) continue;
+  seenPassive.add(key);
+  passives.push({ n: it.n, t: it.t ?? -1, per: r.time_requirement, out: o.quantity || 1 });
+}
+passives.sort((a, b) => a.n.localeCompare(b.n));
+
 const out = {
   generatedAt: new Date().toISOString(),
   sourceCommit: sourceCommit(),
   foods,
   nodes,
+  passives,
   skills,
   buildingTypes: buildingTypeName,
   items,

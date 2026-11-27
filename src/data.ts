@@ -71,6 +71,8 @@ export interface GameData {
   drops?: Record<string, { chance: number; qty: number; source: string }[]>;
   /** Gatherable resource nodes: name, tier, tag, HP, respawn seconds. */
   nodes?: { n: string; t: number; tag: string; hp: number; rs: number }[];
+  /** Passive processes: name, tier, seconds per unit, output qty per craft. */
+  passives?: { n: string; t: number; per: number; out: number }[];
 }
 
 /** A key like "i1010001" or "c150000" identifying an item/cargo across namespaces. */
