@@ -467,7 +467,6 @@ function ProfessionBlock({
   // Hide a section with nothing to show (no matches, or all done when hiding completed).
   if ((term || effHide) && shown.length === 0) return null;
   const isOpen = term ? true : openState;
-  const done = lines.filter((l) => effHave(l) >= l.qty).length;
   // Unit-weighted progress, so partial amounts (storage/tracked) show up — not
   // just fully-finished lines.
   const haveU = lines.reduce((s, l) => s + Math.min(effHave(l), l.qty), 0);
