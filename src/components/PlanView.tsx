@@ -148,8 +148,57 @@ export function PlanView({
   // Overall progress across the whole build. Uses the same per-line "have"
   // logic as the sections: a hardset override wins, else tracked + pulled storage.
   const storedAt = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
-  const effHaveTop = (l: PlanLine) =>
+  const baseHave = (l: PlanLine) =>
     overrides[l.key] !== undefined ? overrides[l.key] : (progress[l.key] || 0) + storedAt(l.key);
+
+  // "Count completed toward components": a completed craftable (e.g. 200 of 400
+  // Study Journals) credits the materials it contains down the tree, so each
+  // component's progress reflects what's already locked in finished items.
+  const [netMode, setNetMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("bitforge:netmode") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  function toggleNet(v: boolean) {
+    setNetMode(v);
+    try {
+      localStorage.setItem("bitforge:netmode", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+  const credit = useMemo(() => {
+    const c = new Map<ItemKey, number>();
+    if (!netMode) return c;
+    function distribute(key: ItemKey, amount: number, depth: number, path: Set<ItemKey>) {
+      if (amount <= 0 || depth > 60) return;
+      const rk = canonKey(data, key);
+      if (path.has(rk)) return;
+      const recs = recipesFor(data, rk);
+      if (!recs.length) return;
+      const r = recs[Math.min(chosen[rk] ?? 0, recs.length - 1)];
+      const next = new Set(path);
+      next.add(rk);
+      for (const [k, id, q] of r.mats) {
+        const add = (amount * q) / (r.out || 1);
+        const ck = canonKey(data, `${k}${id}`);
+        c.set(ck, (c.get(ck) || 0) + add);
+        distribute(`${k}${id}`, add, depth + 1, next);
+      }
+    }
+    for (const l of plan.lines) {
+      const base = baseHave(l);
+      if (base > 0 && recipesFor(data, l.key).length) distribute(l.key, Math.min(base, l.qty), 0, new Set());
+    }
+    for (const [k, v] of c) c.set(k, Math.round(v));
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [netMode, plan.lines, progress, overrides, storage, data, chosen]);
+  const creditOf = (key: ItemKey) => credit.get(canonKey(data, key)) || 0;
+  const effHaveTop = (l: PlanLine) => baseHave(l) + creditOf(l.key);
+
   const doneLines = plan.lines.filter((l) => effHaveTop(l) >= l.qty).length;
   const itemPct = plan.lines.length ? Math.round((doneLines / plan.lines.length) * 100) : 0;
   // Keys whose total requirement is met — struck through everywhere (rows + sub-lists).
@@ -158,7 +207,7 @@ export function PlanView({
     for (const l of plan.lines) if (effHaveTop(l) >= l.qty) s.add(canonKey(data, l.key));
     return s;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan.lines, progress, overrides, storage, data]);
+  }, [plan.lines, progress, overrides, storage, data, credit]);
   // How much of each item you have (storage + tracked + override), so sub-lists
   // can show on-hand amounts too.
   const haveMap = useMemo(() => {
@@ -169,7 +218,7 @@ export function PlanView({
     }
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan.lines, progress, overrides, storage, data]);
+  }, [plan.lines, progress, overrides, storage, data, credit]);
   const totalUnits = plan.lines.reduce((s, l) => s + l.qty, 0);
   const haveUnits = plan.lines.reduce((s, l) => s + Math.min(effHaveTop(l), l.qty), 0);
   const unitPct = totalUnits ? Math.round((haveUnits / totalUnits) * 100) : 0;
@@ -266,6 +315,13 @@ export function PlanView({
             match
           </span>
         )}
+        <label
+          className="hidedone-toggle"
+          title="Count completed craftables toward their components (e.g. 200 finished journals credit the parchment/ink they contain)"
+        >
+          <input type="checkbox" checked={netMode} onChange={(e) => toggleNet(e.target.checked)} />
+          Count completed
+        </label>
         <label className="hidedone-toggle" title="Hide materials you've already finished">
           <input type="checkbox" checked={hideDone} onChange={(e) => toggleHideDone(e.target.checked)} />
           Hide completed
@@ -327,6 +383,7 @@ export function PlanView({
             onRefresh={onRefresh}
             filter={filter}
             hideDone={hideDone}
+            credit={credit}
             open={!collapsed.has(i)}
             onToggleOpen={() => toggleSection(i)}
           />
@@ -348,6 +405,7 @@ export function PlanView({
           onRefresh={onRefresh}
           filter={filter}
           hideDone={hideDone}
+          credit={credit}
         />
       )}
 
@@ -367,6 +425,7 @@ export function PlanView({
           onRefresh={onRefresh}
           filter={filter}
           hideDone={hideDone}
+          credit={credit}
         />
       )}
 
@@ -390,6 +449,7 @@ export function PlanView({
               onRefresh={onRefresh}
               filter={filter}
               hideDone={hideDone}
+              credit={credit}
             />
           ))}
 
@@ -444,6 +504,7 @@ function ProfessionBlock({
   anchor,
   open,
   onToggleOpen,
+  credit,
 }: {
   data: GameData;
   title: string;
@@ -462,6 +523,7 @@ function ProfessionBlock({
   anchor?: string;
   open?: boolean;
   onToggleOpen?: () => void;
+  credit?: Map<ItemKey, number>;
 }) {
   const [openLocal, setOpenLocal] = useState(true);
   const controlled = open !== undefined;
@@ -473,9 +535,11 @@ function ProfessionBlock({
   const [refreshing, setRefreshing] = useState(false);
   const stored = (key: ItemKey) => (storage ? storage[key] || 0 : 0);
   const hasOverride = (key: ItemKey) => overrides[key] !== undefined;
-  // A hardset override wins; otherwise manual progress + pulled storage.
+  const creditOf = (key: ItemKey) => credit?.get(canonKey(data, key)) || 0;
+  // A hardset override wins; otherwise manual progress + pulled storage; plus any
+  // credit from completed craftables above it.
   const effHave = (l: PlanLine) =>
-    hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key);
+    (hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key)) + creditOf(l.key);
   const term = (filter || "").trim().toLowerCase();
   let shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
   if (effHide) shown = shown.filter((l) => effHave(l) < l.qty);
