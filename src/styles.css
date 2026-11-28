@@ -326,6 +326,8 @@ a:hover { text-decoration: underline; }
 .prereq-node.done > .prereq-row { opacity: 0.5; }
 .prereq-node.done > .prereq-row .prereq-name { text-decoration: line-through; }
 .prereq-node.done > .prereq-row .prereq-qty { text-decoration: line-through; }
+.prereq-have { font: 10.5px var(--mono); color: #c9a15a; background: #2a2113; padding: 1px 6px; border-radius: 5px; }
+.prereq-have.enough { color: #8fe0ad; background: #16271d; }
 .prereq-prof { font-size: 11px; color: var(--muted); }
 .mat input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); cursor: pointer; }
 .m-override {

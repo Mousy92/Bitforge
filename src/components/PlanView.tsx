@@ -16,6 +16,8 @@ const PROG_PREFIX = "bitforge:prog:";
 
 /** Keys whose total requirement is met — struck through in rows and sub-lists. */
 const DoneContext = createContext<Set<ItemKey>>(new Set());
+/** How much of each item you have on hand, shown in the sub-lists. */
+const HaveContext = createContext<Map<ItemKey, number>>(new Map());
 
 // Processing-depth labels: 0 = gathered, 1 = made from raw, etc.
 function depthLabel(d: number): string {
@@ -157,6 +159,17 @@ export function PlanView({
     return s;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan.lines, progress, overrides, storage, data]);
+  // How much of each item you have (storage + tracked + override), so sub-lists
+  // can show on-hand amounts too.
+  const haveMap = useMemo(() => {
+    const m = new Map<ItemKey, number>();
+    for (const l of plan.lines) {
+      const h = effHaveTop(l);
+      if (h > 0) m.set(canonKey(data, l.key), h);
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.lines, progress, overrides, storage, data]);
   const totalUnits = plan.lines.reduce((s, l) => s + l.qty, 0);
   const haveUnits = plan.lines.reduce((s, l) => s + Math.min(effHaveTop(l), l.qty), 0);
   const unitPct = totalUnits ? Math.round((haveUnits / totalUnits) * 100) : 0;
@@ -168,6 +181,7 @@ export function PlanView({
 
   return (
     <DoneContext.Provider value={doneKeys}>
+    <HaveContext.Provider value={haveMap}>
     <div className="plan">
       <div className="panel-head">
         <h2>Materials needed</h2>
@@ -398,6 +412,7 @@ export function PlanView({
         </button>
       )}
     </div>
+    </HaveContext.Provider>
     </DoneContext.Provider>
   );
 }
@@ -751,6 +766,7 @@ function PrereqNode({
 }) {
   const [open, setOpen] = useState(false);
   const done = useContext(DoneContext);
+  const have = useContext(HaveContext);
   const rk = canonKey(data, keyId);
   const it = data.items[rk];
   const recs = recipesFor(data, rk);
@@ -758,6 +774,7 @@ function PrereqNode({
   const expandable = recs.length > 0 && !path.has(rk) && depth < 40;
   const prof = professionFor(data, rk, chosen);
   const isDone = done.has(rk);
+  const h = have.get(rk) || 0;
   return (
     <li className={isDone ? "prereq-node done" : "prereq-node"}>
       <div className="prereq-row">
@@ -773,6 +790,11 @@ function PrereqNode({
           {it?.n ?? rk}
           {it && it.t > 0 && <span className="m-tier">T{it.t}</span>}
           <span className="prereq-prof">{prof}</span>
+          {h > 0 && (
+            <span className={`prereq-have${h >= qty ? " enough" : ""}`} title="On hand (storage + tracked)">
+              have {h.toLocaleString()}
+            </span>
+          )}
         </span>
       </div>
       {open && expandable && (
