@@ -246,6 +246,25 @@ for (const r of craftingRecipes) {
   }
 }
 
+// ---- drop "un-refine" recipes ----------------------------------------------
+// Some items can be made from their own refined form (e.g. Rough Leather from
+// Refined Rough Leather, which is itself 5 Rough Leather + Leather Treatment).
+// That's a refine/unrefine cycle: picking it as the default recipe makes the
+// planner expand the base item back through the refined recipe, dragging its
+// extra inputs (leather treatment) into everything. Drop these so the real
+// production recipe (e.g. from a tanned pelt) is used.
+let droppedUnrefine = 0;
+for (const key of Object.keys(recipes)) {
+  const on = items[key]?.n;
+  if (!on) continue;
+  const refinedName = `Refined ${on}`;
+  const kept = recipes[key].filter((r) => !r.mats.some(([k, id]) => items[`${k}${id}`]?.n === refinedName));
+  if (kept.length && kept.length !== recipes[key].length) {
+    droppedUnrefine += recipes[key].length - kept.length;
+    recipes[key] = kept;
+  }
+}
+
 // ---- alias dead-end materials to their craftable same-name twin -------------
 // BitCraft stores many items twice: a base/inventory id (what recipes consume)
 // and a separate id that the crafting recipe actually produces. When a consumed
