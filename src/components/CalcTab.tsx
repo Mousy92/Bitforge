@@ -87,8 +87,9 @@ export function CalcTab({ data }: { data: GameData }) {
     for (const [key, srcs] of Object.entries(drops)) {
       const it = data.items[key];
       if (!it || !srcs.length) continue;
-      const best = srcs[0]; // highest-chance source
-      out.push({ key, name: it.n, chance: best.chance, qty: best.qty, source: best.source });
+      // One entry per source, so items with several sources (e.g. Rough Straw from
+      // rice vs embergrain) are all pickable.
+      for (const s of srcs) out.push({ key, name: it.n, chance: s.chance, qty: s.qty, source: s.source });
     }
     return out;
   }, [data]);
