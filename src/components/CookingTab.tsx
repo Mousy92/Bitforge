@@ -61,13 +61,13 @@ export function CookingTab({ data }: { data: GameData }) {
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [foods]);
 
-  // Best (largest magnitude) value a food grants for the selected buff label.
+  // The best (highest) value a food grants for the selected buff label. Higher is
+  // better, so a +8.8% ranks above a -20% debuff.
   function buffValue(f: FoodRaw, label: string): number {
-    let best = 0;
+    let best = -Infinity;
     for (const b of f.buffs)
-      for (const [lbl, v] of b.stats)
-        if (lbl === label && Math.abs(v) > Math.abs(best)) best = v;
-    return best;
+      for (const [lbl, v] of b.stats) if (lbl === label) best = Math.max(best, v);
+    return best === -Infinity ? 0 : best;
   }
 
   const rows = useMemo(() => {
@@ -82,9 +82,9 @@ export function CookingTab({ data }: { data: GameData }) {
         (b) => b.d.toLowerCase().includes(term) || b.stats.some(([lbl]) => lbl.toLowerCase().includes(term))
       );
     });
-    // When a buff is picked, strongest-first by that buff; otherwise the chosen column sort.
+    // When a buff is picked, best (highest) first by that buff; otherwise the chosen column sort.
     if (buff) {
-      r = [...r].sort((a, b) => Math.abs(buffValue(b, buff)) - Math.abs(buffValue(a, buff)) || a.n.localeCompare(b.n));
+      r = [...r].sort((a, b) => buffValue(b, buff) - buffValue(a, buff) || a.n.localeCompare(b.n));
     } else {
       r = [...r].sort((a, b) => {
         let cmp: number;
