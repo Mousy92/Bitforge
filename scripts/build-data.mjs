@@ -554,19 +554,27 @@ for (const [key, it] of Object.entries(items)) {
 // ---- passive processes (for the passive timers) ----------------------------
 // Passive crafts (bricks firing, ingots smelting, …) complete over time without
 // active input. Record the per-unit time so a timer can count a batch down.
-const passives = [];
-const seenPassive = new Set();
+// Some items have several passive recipes (e.g. a crop can be grown from seed OR
+// upgraded from the lower tier, with different times). Prefer the grow-from-seed
+// recipe (full process), else the longest, so a crop's time is the real one.
+const passiveByKey = new Map();
 for (const r of craftingRecipes) {
   if (!r.is_passive || !(r.time_requirement > 0)) continue;
   const o = (r.crafted_item_stacks || [])[0];
   if (!o) continue;
   const key = `i${o.item_id}`;
   const it = items[key];
-  if (!it || seenPassive.has(key)) continue;
-  seenPassive.add(key);
-  passives.push({ n: it.n, t: it.t ?? -1, per: r.time_requirement, out: o.quantity || 1 });
+  if (!it) continue;
+  const fromSeed = (r.consumed_item_stacks || []).some((s) => / Seeds?$/i.test(items[`i${s.item_id}`]?.n || ""));
+  const cand = { per: r.time_requirement, out: o.quantity || 1, fromSeed };
+  const prev = passiveByKey.get(key);
+  if (!prev) passiveByKey.set(key, cand);
+  else if (cand.fromSeed && !prev.fromSeed) passiveByKey.set(key, cand);
+  else if (cand.fromSeed === prev.fromSeed && cand.per > prev.per) passiveByKey.set(key, cand);
 }
-passives.sort((a, b) => a.n.localeCompare(b.n));
+const passives = [...passiveByKey.entries()]
+  .map(([key, v]) => ({ n: items[key].n, t: items[key].t ?? -1, per: v.per, out: v.out }))
+  .sort((a, b) => a.n.localeCompare(b.n));
 
 const out = {
   generatedAt: new Date().toISOString(),
