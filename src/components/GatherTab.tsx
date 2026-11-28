@@ -299,8 +299,9 @@ export function GatherTab({ data }: { data: GameData }) {
         <p className="calc-note">
           <b>Active:</b> break time = node HP ÷ your damage (rounded up) × swing speed (steady swings;
           no crits / tool tier / buffs). A node's <b>respawn</b> timer (when pulled) counts how long
-          until it's back — switch with the ⟳ toggle. <b>Passive:</b> total = quantity × the process's
-          per-unit time (one station, in series).
+          until it's back — switch with the ⟳ toggle. <b>Passive:</b> a batch cooks in parallel, so
+          the whole lot is done after one cycle — the timer is the process's cook time, no matter the
+          quantity.
         </p>
       </div>
     </main>
@@ -336,7 +337,7 @@ function TimerCard({
   const breakDur = swings * swing;
   const mode = timer.mode ?? "break";
   const duration = passive
-    ? qty * per
+    ? per // a batch cooks in parallel — the whole lot finishes after one cycle
     : mode === "respawn" && timer.respawn
       ? timer.respawn
       : breakDur;
@@ -420,7 +421,8 @@ function TimerCard({
       <div className="tc-meta">
         {passive ? (
           <>
-            {qty.toLocaleString()} × {fmt(per)} · {canRun ? fmt(duration) : "—"}
+            {qty > 0 ? `${qty.toLocaleString()} items · ` : ""}
+            {fmt(per)} per batch
           </>
         ) : mode === "break" ? (
           <>
