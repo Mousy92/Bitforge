@@ -855,7 +855,10 @@ function PrereqNode({
           {it && it.t > 0 && <span className="m-tier">T{it.t}</span>}
           <span className="prereq-prof">{prof}</span>
           {h > 0 && (
-            <span className={`prereq-have${h >= qty ? " enough" : ""}`} title="On hand (storage + tracked)">
+            <span
+              className={`prereq-have${isDone ? " enough" : ""}`}
+              title={isDone ? "On hand — total requirement met" : "On hand (storage + tracked); still short of the total needed across the plan"}
+            >
               have {h.toLocaleString()}
             </span>
           )}
