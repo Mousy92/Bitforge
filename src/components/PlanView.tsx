@@ -67,6 +67,11 @@ export function PlanView({
   const [view, setView] = useState<View>(treeDefault && roots && roots.length ? "tree" : "profession");
   const [progress, setProgress] = useState<Progress>({});
   const [filter, setFilter] = useState("");
+  const [tierFilter, setTierFilter] = useState<number | null>(null);
+  const planTiers = useMemo(
+    () => [...new Set(plan.lines.map((l) => l.tier))].filter((t) => t > 0).sort((a, b) => a - b),
+    [plan.lines]
+  );
   const [hideDone, setHideDone] = useState<boolean>(() => {
     try {
       return localStorage.getItem("bitforge:hidedone") === "1";
@@ -328,6 +333,24 @@ export function PlanView({
         </label>
       </div>
 
+      {planTiers.length > 1 && (
+        <div className="tier-row mat-tier">
+          <span>Tier</span>
+          <button className={tierFilter === null ? "tchip on" : "tchip"} onClick={() => setTierFilter(null)}>
+            Any
+          </button>
+          {planTiers.map((t) => (
+            <button
+              key={t}
+              className={tierFilter === t ? "tchip on" : "tchip"}
+              onClick={() => setTierFilter(tierFilter === t ? null : t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+
       {view === "profession" && plan.byProfession.length > 1 && (
         <div className="prof-jump">
           <span className="prof-jump-label">Jump to:</span>
@@ -384,6 +407,7 @@ export function PlanView({
             filter={filter}
             hideDone={hideDone}
             credit={credit}
+            tier={tierFilter}
             open={!collapsed.has(i)}
             onToggleOpen={() => toggleSection(i)}
           />
@@ -406,6 +430,7 @@ export function PlanView({
           filter={filter}
           hideDone={hideDone}
           credit={credit}
+          tier={tierFilter}
         />
       )}
 
@@ -426,6 +451,7 @@ export function PlanView({
           filter={filter}
           hideDone={hideDone}
           credit={credit}
+          tier={tierFilter}
         />
       )}
 
@@ -450,6 +476,7 @@ export function PlanView({
               filter={filter}
               hideDone={hideDone}
               credit={credit}
+              tier={tierFilter}
             />
           ))}
 
@@ -505,6 +532,7 @@ function ProfessionBlock({
   open,
   onToggleOpen,
   credit,
+  tier,
 }: {
   data: GameData;
   title: string;
@@ -524,6 +552,7 @@ function ProfessionBlock({
   open?: boolean;
   onToggleOpen?: () => void;
   credit?: Map<ItemKey, number>;
+  tier?: number | null;
 }) {
   const [openLocal, setOpenLocal] = useState(true);
   const controlled = open !== undefined;
@@ -542,10 +571,11 @@ function ProfessionBlock({
     (hasOverride(l.key) ? overrides[l.key] : (progress[l.key] || 0) + stored(l.key)) + creditOf(l.key);
   const term = (filter || "").trim().toLowerCase();
   let shown = term ? lines.filter((l) => l.name.toLowerCase().includes(term)) : lines;
+  if (tier != null) shown = shown.filter((l) => l.tier === tier);
   if (effHide) shown = shown.filter((l) => effHave(l) < l.qty);
   // Hide a section with nothing to show (no matches, or all done when hiding completed).
-  if ((term || effHide) && shown.length === 0) return null;
-  const isOpen = term ? true : openState;
+  if ((term || effHide || tier != null) && shown.length === 0) return null;
+  const isOpen = term || tier != null ? true : openState;
   // Unit-weighted progress, so partial amounts (storage/tracked) show up — not
   // just fully-finished lines.
   const haveU = lines.reduce((s, l) => s + Math.min(effHave(l), l.qty), 0);
@@ -568,7 +598,7 @@ function ProfessionBlock({
           <span className="chev">{isOpen ? "▾" : "▸"}</span>
           <span className="profname" dangerouslySetInnerHTML={{ __html: title }} />
           <span className="profmeta">
-            {term
+            {term || tier != null
               ? `${shown.length} of ${lines.length}`
               : effHide
                 ? `${shown.length} left of ${lines.length}`
